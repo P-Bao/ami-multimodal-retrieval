@@ -48,6 +48,7 @@ from ami_rag.observability import (
 from ami_rag.settings import parser_kwargs, resolve_image_describe_mode
 from ami_rag.sources import (
     SOURCE_MINIO_PARSE,
+    doc_link_fields,
     resolve_file_path,
     select_source,
     source_hash,
@@ -1254,7 +1255,13 @@ class VectorPipeline(PipelineRunner):
                     title=(doc or {}).get("title"),
                     organization_unit_id=(doc or {}).get("organization_unit_id"),
                     owner_id=(doc or {}).get("owner_id"),
-                    meta={"index_stats": {"chunks": len(chunks), "vectors": len(chunks)}},
+                    meta={
+                        "index_stats": {"chunks": len(chunks), "vectors": len(chunks)},
+                        # document_oid (ObjectId) cho $lookup theo docs §3;
+                        # organization_unit_id/owner_id/type/title đã ghi qua kwargs,
+                        # doc_link_fields ghi đè cùng giá trị.
+                        **doc_link_fields(doc or {}),
+                    },
                 )
 
             return StageOutcome(

@@ -382,6 +382,15 @@ async def test_mark_stage_meta_preserved_through_mark_indexed(
     assert row["counts"]["image"] == 1
 
 
+async def test_mark_indexed_writes_document_oid_for_lookup(pipeline, fake_status_store):
+    """docs §3: registry indexed mang document_oid (ObjectId) để $lookup."""
+    from bson import ObjectId
+
+    await pipeline.run(PDF_ID)
+    row = fake_status_store.get(PDF_ID)
+    assert row["document_oid"] == ObjectId(PDF_ID)
+
+
 # --- Crawl: section 'Hình ảnh' -> tải ảnh về MinIO -> item image ---
 
 
