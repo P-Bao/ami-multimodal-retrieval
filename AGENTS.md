@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **RAG-Anything** (5180 symbols, 9720 relationships, 286 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **ami-multimodal-retrieval** (5488 symbols, 10723 relationships, 296 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **RAG-Anything** (5180 symbols, 9720 rela
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/RAG-Anything/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/RAG-Anything/clusters` | All functional areas |
-| `gitnexus://repo/RAG-Anything/processes` | All execution flows |
-| `gitnexus://repo/RAG-Anything/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/ami-multimodal-retrieval/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/ami-multimodal-retrieval/clusters` | All functional areas |
+| `gitnexus://repo/ami-multimodal-retrieval/processes` | All execution flows |
+| `gitnexus://repo/ami-multimodal-retrieval/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
