@@ -42,38 +42,28 @@ This project is indexed by GitNexus as **RAG-Anything** (5180 symbols, 9720 rela
 
 <!-- gitnexus:end -->
 
-# Task hiện hành — Chunk v2 + caption tiếng Việt: ảnh không lên top-k (18/10/2026)
+# Task hiện hành — BGE-M3 migration: hybrid Qdrant + `artifact_urls` + reindex ngắt quãng
 
-Trạng thái: **code xong, chưa reindex** (4 commit `9bd1b76`..`5e58db3`). Triệu chứng: query "sân bóng đá cơ sở Hà Đông" trả về toàn chunk `- Địa chỉ: Tầng N, nhà A1, ...` và **không** trả ảnh sơ đồ mặt bằng.
-
-## Chẩn đoán (đo trên index thật, `scripts/diagnose_query.py`)
-1. **0 ảnh trong 400 ứng viên vector.** Chunk ảnh sơ đồ (doc `6a8ee761694f1f325e516aa9` trang 13) xếp hạng **246/1123**, điểm 0.2698; chunk text tốt nhất 0.3945.
-2. **Nguyên nhân 1 — chunk v1 quá mảnh.** `backend_data` tách **mỗi dòng PDF** thành 1 content_list item ⇒ doc 265 trang ra 3378 chunk, ~90% là dòng địa chỉ trùng nội dung.
-3. **Nguyên nhân 2 — caption tiếng Anh.** cos(query, chunk ảnh): caption EN hiện tại **0.337** vs caption VI đầy đủ **0.484**.
-4. **KHÔNG phải lỗi rerank/fusion.** Khi ảnh đã có trong ứng viên, `RERANK_FUSION=raw` xếp ảnh **hạng 1** (0.0158 > 0.0129 của text đầu) ⇒ không cần đụng `RERANK_*` (user đã chốt hoãn, và đo thực tế xác nhận hoãn là đúng).
+Trạng thái: **code xong, chưa reindex** (branch `feature/backend-data-parser`, baseline `6a7366a`). Index Nemotron cũ (dim 2048, collection 1-vector vô danh) không dùng được với config mới — phải reindex sau khi deploy.
 
 ## Nội dung
-1. `9bd1b76` — `scripts/diagnose_query.py`: in hạng/điểm vector từng ứng viên + điểm rerank raw + kết luận ảnh rơi ở tầng nào. Không gọi LLM/Gemini.
-2. `ec3c6bf` — chunk v2: `_build_chunks` gom item text liên tiếp (flush khi gặp item modal) + `chunk_text` mới (tách đoạn theo dòng trống, gom nhiều dòng, gộp chunk < `CHUNK_MIN_CHARS`) + prefix tiêu đề doc vào `content` (kể cả chunk ảnh); `ami_rag/textnorm.py` (`fold_text`/`with_title`, `crawl_images._fold` dùng chung). `CHUNKER_VERSION` v1→v2.
-3. `5e58db3` — `CAPTION_LLM_LANGUAGE=vi`: `ImageModalProcessor` nối `vision_prompt_language_note` khi `item_info` có `caption_language`/`doc_title`; yêu cầu mô tả tiếng Việt nhưng **ghi nguyên văn chữ trong ảnh, liệt kê đầy đủ không bỏ sót** (đúng yêu cầu user cho ảnh sơ đồ); bỏ dòng `Tóm tắt: Không có`.
-4. commit này — docs (`docs/ami_service.md` §5.5 mới, §5.3, §4 env, §6 diagnose, §7 reindex, §10; `.env.ami.example`; AGENTS.md).
+1. **Embed BGE-M3** — `ami_rag/core/bge_embedder.py` (`BGEM3Embedder`): server `bge-m3-embed:8008` (repo `embedding-server`, auth `Bearer BGE_API_KEY`, tối đa 64 text/request, max_length 8192). `POST /embed {texts:[str], return_dense, return_sparse}` → `{dense_vecs, sparse_weights[{token_id: w}]}`; `_to_sparse` đổi `sparse_weights` → `SparseVector{indices, values}` (sort token_id). Handshake `GET /v1/models` + probe `/embed` chốt dim. Embed-only **caption-only**: `_prepare_embed_items` trả `list[str]` (không embed ảnh bytes); caption ảnh tiếng Việt do describe stage (Gemini) sinh.
+2. **Hybrid Qdrant** — named vectors `dense` (1024 COSINE) + `sparse`; query `sparse=None` → dense-only; collection legacy (1 vector vô danh) + cần sparse → `VectorStoreError` (không bổ sung được — phải collection mới); `EMBED_MODEL` đổi ⇒ collection mới tự sinh `multimodal__bge-m3__v2` (slug từ `EMBED_MODEL`).
+3. **Rerank legacy BGE** — `bge-reranker-v2-m3` :8010 (repo `rerank`, documents text-only, tối đa 100/request batch nội bộ), `RERANK_MULTIMODAL=False`; `RERANK_FUSION=rrf` giờ hoạt động cả legacy (legacy trả full scores). API trả `RetrievedDocV2.artifact_urls: list[str]` — presigned của mọi ảnh doc qua `presign_doc_images` (crawl + pdf đều trả; doc không resolve → `[]`), giữ `artifact_url`.
+4. **CLI reindex ngắt quãng** — `--limit N` (0=all), `--sleep S` giây giữa doc (mặc định 0.2), `--batch B` (20), `--batch-sleep S` (2.0); `--from-stage embed` dùng lại `chunks.json` (không parse/describe).
+5. Settings (nguồn sự thật `ami_rag/settings.py`): `EMBED_BACKEND=bge`, `EMBED_SERVER_URL=http://localhost:8008`, `EMBED_MODEL=BAAI/bge-m3`, `EMBED_DIM=1024`, `EMBED_MAX_INPUT_TOKENS=8192`, `EMBED_IMAGE_TOKEN_RESERVE=0`, `EMBED_RETURN_SPARSE=true`, `EMBED_BATCH_SIZE=32` (≤64); `RERANK_BACKEND=legacy`, `RERANK_BASE_URL=http://localhost:8010`, `RERANK_MODEL=BAAI/bge-reranker-v2-m3`, `RERANK_MULTIMODAL=false`; `resolve_embed_backend`: `auto` + model chứa `bge` → `bge`.
+6. Server máy B: bảng dưới được thay — gateway `nemotron-vl-vllm` (8080) / `qwen-embedding-server` (8007) **không còn**; code backend `custom`/`openai` giữ lại cho legacy. Vintern :8090 vẫn là OCR fallback.
 
-## Verify đã chạy
-- Offline: `pytest tests/ami_service` 183 pass; `ruff check ami_rag tests/ami_service` sạch.
-- Đo thật (không Gemini): doc `Sổ tay sinh viên 2026` 3378 → **825 chunk**; top-40 sau chunk v2 là chunk có chủ đề (`Sổ tay sinh viên 2026 VIII. PHÒNG KẾ HOẠCH ĐẦU TƯ - Địa chỉ: Nhà B14, ...`) thay vì dòng địa chỉ trần.
-- Live test `tests/test_retrieval_recall_live.py` **chạy được** ở máy dev (API :8009, Qdrant `172.23.0.9:6333`, MinIO `172.23.0.12:9000`, embed/rerank `10.170.100.220:8080`).
-
-## Deploy (máy A)
+## Brief runbook (máy A)
 ```bash
-# .env: CHUNKER_VERSION=v2 (+ CHUNK_MIN_CHARS=200 tu dong theo mac dinh)
-ami-rag reindex --all --from-stage chunk --dry-run    # doc cua chay lai chunk, KHONG goi Gemini
-ami-rag reindex --all --from-stage chunk --yes
-# sau khi kiem tra index moi OK:
-ami-rag cleanup --stale-models
-# doi CAPTION_LLM_LANGUAGE=vi (mac dinh) -> sinh lai mo ta anh:
-ami-rag reindex --all --from-stage describe --yes
+ami-rag status --check-embed-server                          # :8008 + :8010 sẵn sàng
+ami-rag reindex --stale --from-stage embed --dry-run         # scope + cache hits
+ami-rag reindex --stale --from-stage embed --limit 20 --yes  # thử lô nhỏ trước
+ami-rag reindex --stale --from-stage embed --batch 20 --yes  # chạy thật, ngắt quãng
 ```
-Text trong `content_list.json` của doc crawl/PDF đã **mất dấu một phần** (`chỉ`→`chi`, `Tầng`→`Tng`, `vị`→`v`, nhưng `Hà Đông`/`Cơ`/`Phòng` còn dấu) — không phải do repo này, khớp mẫu mất dấu của **OCR service** (`.153:12006`) chứ không phải backend crawl. Cần xử lý upstream; không khôi phục được sau khi đã mất.
+- Resume/lặp vô hạn: doc xong embed được đánh `indexed` (kèm `embed_model` mới) trong `multimodal_rag_documents`; doc còn lại → effective `stale` ⇒ chạy lại lệnh `--stale` (mặc định) tự tiếp tục đến hết. Chỉ ép `--from-stage embed` khi doc đã có `chunks.json`; thiếu thì bỏ `--from-stage` (per-doc tự chọn `chunk`).
+- Index mới ổn: `ami-rag cleanup --stale-models --purge-cache-model "nvidia/llama-nemotron-embed-vl-1b-v2" --yes`.
+- Chi tiết: `docs/ami_service.md` — §5.2 (embed/rerank BGE), §5.6 (Qdrant hybrid), §7 (runbook reindex), §6 (`artifact_urls`).
 
 ---
 
@@ -110,15 +100,15 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`,
 ## Service máy B (HTTP)
 | Port | Repo (ngoài RAG-Anything) | Vai trò |
 |---|---|---|
-| 8080 | `D:\Code\Python\Ami\RAG\nemotron-vl-vllm\` | gateway FastAPI trước 2 vLLM: embed `nvidia/llama-nemotron-embed-vl-1b-v2` + rerank `nvidia/llama-nemotron-rerank-vl-1b-v2` |
-| 8007 | `D:\Code\Python\Ami\RAG\qwen-embedding-server\` | `Qwen/Qwen3-VL-Embedding-2B` (backend `custom`, `RemoteEmbedder`) |
+| 8008 | `embedding-server` | `bge-m3-embed` — `BAAI/bge-m3`: dense 1024 + sparse lexical weights, auth `Bearer BGE_API_KEY`, tối đa 64 text/request, max_length 8192 |
+| 8010 | `rerank` | BGE reranker `BAAI/bge-reranker-v2-m3`: documents text-only, tối đa 100/request |
 | 8090 | `D:\Code\Python\Ami\RAG\vintern-vllm\` | OCR fallback `5CD-AI/Vintern-1B-v3_5` (đã build + 22 test; chưa git init; chạy thật chờ GPU máy B) |
 
-- Contract gateway nemotron (client `OpenAIEmbedder` / `build_vllm_rerank_func` đã đối chiếu khớp): `GET /health`; `POST /v1/embeddings` với `{"input": [items], "input_type": "query"|"document"}` — item `str` | `{"text", "image"=<base64|URL>}` | `{"content": [parts]}`; `POST /v1/rerank` (alias `/rerank`) với `{query, documents, top_n}` → `{results: [{index, relevance_score}]}`, documents `str` hoặc `{"content": [text/image_url parts]}`.
+- Contract embedding-server (client `BGEM3Embedder` đã đối chiếu khớp): `GET /v1/models` → `{"data": [{"id": "BAAI/bge-m3", ...}]}`; `POST /embed` với `{"texts": [...], "return_dense": true, "return_sparse": bool}` → `{"dense_vecs": [[float]], "sparse_weights": [{"<token_id>": w}]}` (token_id dạng chuỗi); auth `Authorization: Bearer` trùng `BGE_API_KEY` server; 400 khi >64 text hoặc text rỗng, 401 sai key. Rerank :8010 `POST /rerank` `{query, documents, top_n}` → `{results: [{index, relevance_score}]}`, documents text-only; `RERANK_FUSION=rrf` gửi `top_n=len` để nhận full scores (rrf hoạt động cả legacy).
 - Contract gateway vintern (client `VinterOcrClient` đã đối chiếu khớp): `POST /v1/ocr` multipart `file` (PDF/ảnh) + `mode=text|table` + `pages` (`1-5`/`1,3,7`) + `dpi`; response `mode=text` → `{pages, text, page_texts: [{page, text}]}`, `mode=table` → `{pages, tables: [{page, html, markdown}]}`; `GET /health` → `{status, model, vllm}`; lỗi 400 (file/mode/trang), 401 (thiếu `Authorization: Bearer`), 502 (vLLM chết), 503 (OOM sau retry). Cần `templates/vintern-ocr.jinja` cho vLLM (tokenizer Vinter đóng template Qwen text-only, không sinh `<image>`).
-- Backend dispatch: `EMBED_BACKEND` (`auto|custom|openai`; auto: prefix `Qwen/` → custom) + `RERANK_BACKEND` (`auto|legacy|vllm`; auto: rỗng/chứa `bge` → legacy BGE text-only) + `RERANK_MULTIMODAL` (default True). Resolver: `settings.resolve_embed_backend`/`resolve_rerank_backend`; factory `build_embedder`; cli `_build_embedder`.
-- Multimodal: `_prepare_embed_items` gắn ảnh asset cho modality image/table/equation; `build_rerank_documents` làm tương tự cho rerank (thiếu ảnh → fallback text). Dim 2048 cho cả Nemotron và Qwen.
-- URL default `EMBED_SERVER_URL`/`RERANK_BASE_URL` = `http://localhost:8080`; dùng Qwen thì phải đổi `EMBED_SERVER_URL` về 8007 qua env.
+- Backend dispatch: `EMBED_BACKEND` (`auto|custom|openai|bge`; auto: model chứa `bge` → bge, prefix `Qwen/` → custom) + `RERANK_BACKEND` (`auto|legacy|vllm`; auto: rỗng/chứa `bge` → legacy BGE text-only) + `RERANK_MULTIMODAL` (default False). Resolver: `settings.resolve_embed_backend`/`resolve_rerank_backend`; factory `build_embedder`; cli `_build_embedder`.
+- Multimodal: `_prepare_embed_items` giờ **caption-only** — trả `list[str]`, không nạp ảnh bytes cho embed (caption VI do describe stage sinh). API trả thêm `artifact_urls` = presigned mọi ảnh doc qua `presign_doc_images`. Dim 1024.
+- URL default `EMBED_SERVER_URL` = `http://localhost:8008`, `RERANK_BASE_URL` = `http://localhost:8010`; trong Docker trỏ hostname service compose của bộ BGE.
 
 ## Vận hành
 - `ami-rag status [--check-embed-server]` — `_check_embed_server` backend-agnostic (`/health` + `embedder.verify()`); doc lỗi nằm ở `failed` kèm `error`/`error_stage`.
@@ -141,5 +131,5 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`,
 - Test: `$env:PYTHONIOENCODING="utf-8"; uv run pytest -q tests/ami_service/` (service, `make test`) và `uv run pytest -q tests --ignore=tests/ami_service` (lib, `make test-lib`); lint `uv run ruff check ami_rag tests/ami_service` (ruff 0.16.0 global; `ami_rag/**` đã có per-file-ignores BLE001/S110/B008).
 - File có tiếng Việt: chỉ dùng tool write/edit, KHÔNG `Add-Content`/`Set-Content` (cp1252 mojibake).
 - Không gọi LLM/API ngoài ý muốn: test chỉ dùng fake + `httpx.MockTransport`/`ASGITransport`.
-- Repo server máy B luôn nằm RIÊNG ngoài RAG-Anything (`qwen-embedding-server`, `nemotron-vl-vllm`, `vintern-vllm`). `nemotron-vl-vllm` KHÔNG phải git repo → hỏi user trước khi `git init` cho repo mới.
+- Repo server máy B luôn nằm RIÊNG ngoài RAG-Anything (`embedding-server`, `rerank`, `qwen-embedding-server`, `nemotron-vl-vllm`, `vintern-vllm`). `nemotron-vl-vllm` KHÔNG phải git repo → hỏi user trước khi `git init` cho repo mới.
 - Test infra sẵn có: `tests/ami_service/conftest.py` (`FakeAssetStore.get_bytes` → `b"\x89PNG-fake-bytes"`, `FakeParser`, `FakeModalProcessor`), `tests/test_gateway_parity.py` (pattern chạy gateway app THẬT qua ASGI + upstream `MockTransport`, skip nếu repo không có — copy cho `vintern-vllm`).

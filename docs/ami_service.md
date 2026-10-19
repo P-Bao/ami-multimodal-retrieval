@@ -19,14 +19,14 @@ ami_rag worker  (ami-rag-worker, hoặc nhúng trong API khi WORKER_ENABLED=true
     ├─ describe: mô tả modal (LLM, tuỳ chọn) → descriptions.json
     │    └─ ảnh: caption theo IMAGE_DESCRIBE_MODE — Gemini (có CAPTION_LLM_API_KEY) / VLM / text thô (mục 5.3)
    ├─ chunk: gom item text liên tiếp + cắt theo ngân sách (CHUNK_SIZE/CHUNK_OVERLAP/CHUNK_MIN_CHARS), prefix tiêu đề doc → chunks.json
-   ├─ embed: RemoteEmbedder (HTTP máy B) → upsert Qdrant (delete_by_doc trước, idempotent)
+   ├─ embed: BGEM3Embedder (HTTP máy B, dense + sparse) → upsert Qdrant (delete_by_doc trước, idempotent)
    └─ mark_indexed: ghi trạng thái vào DocStatusStore
         ▼
    Qdrant (vector, collection `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}`)
    MongoDB `organization_db.multimodal_rag_documents` (DocStatusStore, một dòng/doc theo stage)
 
 Hệ thống AI ──POST /v2/rag──▶ ami_rag API: embed_query (máy B) → vector search Qdrant → rerank service
-                               → resolve doc Mongo → presign MinIO (artifact_url, file_url) → response
+                               → resolve doc Mongo → presign MinIO (artifact_url/artifact_urls, file_url) → response
 ```
 
 - Event mỏng: queue chỉ mang `event` (`created`/`updated`/`deleted`), `document_id`, `content_hash`, `document_type`, `org_id`. Worker đọc nội dung từ Mongo/MinIO (`ami_rag/queue/events.py`).
@@ -35,8 +35,8 @@ Hệ thống AI ──POST /v2/rag──▶ ami_rag API: embed_query (máy B) �
 - Pipeline (`ami_rag/core/vector_pipeline.py`): 5 stage `parse → describe → chunk → embed → indexed`, mỗi stage ghi trạng thái vào DocStatusStore. Kết quả trung gian lưu MinIO (`content_list.json`, `descriptions.json`, `chunks.json`) nên retry chạy tiếp từ stage lỗi, không cần parse lại.
 - Embed: stage duy nhất gọi mạng thật; luôn `delete_by_doc` trước khi upsert (idempotent) rồi verify count. Describe là stage duy nhất có thể gọi LLM (tuỳ chọn): ảnh được caption bằng **Gemini `gemini-2.5-flash-lite`** (OpenAI-compatible, `CAPTION_LLM_*`) khi có API key; không key mà có `QWEN_VLM_MODEL` thì gửi ảnh cho VLM (`vision`); còn lại `none` = text thô caption + footnotes + ngữ cảnh (`IMAGE_DESCRIBE_MODE` — xem mục 5.3). Bảng/công thức/generic vẫn do Qwen text-only tổng hợp (`QWEN_LLM_*`).
 - Retry: `WORKER_MAX_DELIVERY` lần; quá ngưỡng thì dòng registry được đánh dấu `failed` và message được ack. Event lỗi chưa đủ ngưỡng được để pending và tự giao lại (XAUTOCLAIM) sau `WORKER_RETRY_IDLE_MS` (mặc định 10 phút; cần Redis ≥ 6.2) — đặt đủ lớn hơn thời gian parse MinerU dài nhất để worker khác không "cướp" message đang xử lý. Khi `failed`, `attempts` được reset nên `reprocess_failed`/`retry --all-failed` có đủ ngân sách thử lại.
-- LLM (describe): profile `qwen-selfhost` (vLLM, OpenAI-compatible) qua `QWEN_LLM_*` cho bảng/công thức/generic; **caption ảnh dùng Gemini** `gemini-2.5-flash-lite` qua OpenAI-compatible endpoint của Google (`CAPTION_LLM_*`, mục 5.3). Rerank là service ngoài `POST {RERANK_BASE_URL}/rerank` (mặc định vLLM `nvidia/llama-nemotron-rerank-vl-1b-v2`, multimodal: chunk image/table/equation kèm ảnh + text; lỗi rerank thì trả chunk không điểm (fallback)).
-- Embedding: mặc định `nvidia/llama-nemotron-embed-vl-1b-v2` serve qua **gateway** `nemotron-vl-vllm` (máy B, repo riêng: gateway FastAPI trước 2 vLLM embed + rerank, port 8080; endpoint `/v1/embeddings` với `{"input", "input_type": "query"|"document"}`, item text/ảnh base64/bảng); client `OpenAIEmbedder` (`ami_rag/core/openai_embedder.py`). Còn hỗ trợ `Qwen/Qwen3-VL-Embedding-2B` trên `qwen-embedding-server` (port 8007) qua backend `custom` (`RemoteEmbedder`, `ami_rag/core/remote_embedder.py`). Chọn qua `EMBED_BACKEND` (`auto`: prefix `Qwen/` → custom, còn lại → openai). Máy A chỉ gọi HTTP — không cài torch/transformers, không cần GPU cho embed. Chunk image/table/equation có asset_key được embed dạng image+text (ảnh asset từ MinIO).
+- LLM (describe): profile `qwen-selfhost` (vLLM, OpenAI-compatible) qua `QWEN_LLM_*` cho bảng/công thức/generic; **caption ảnh dùng Gemini** `gemini-2.5-flash-lite` qua OpenAI-compatible endpoint của Google (`CAPTION_LLM_*`, mục 5.3). Rerank là service ngoài `POST {RERANK_BASE_URL}/rerank` (mặc định legacy BGE `bge-reranker-v2-m3` :8010, documents text-only tối đa 100/request; `RERANK_MULTIMODAL=false`; lỗi rerank thì trả chunk không điểm (fallback)).
+- Embedding: mặc định backend `bge` — **`BAAI/bge-m3`** serve qua `embedding-server` (máy B, repo riêng, port **8008**, auth `Bearer <EMBED_SERVER_TOKEN>`; `GET /v1/models` + `POST /embed` trả dense 1024 + sparse lexical weights, tối đa 64 text/request). Client `BGEM3Embedder` (`ami_rag/core/bge_embedder.py`). Gateway `nemotron-vl-vllm` (8080) và `qwen-embedding-server` (8007) **đã thay bằng bộ BGE**; chọn backend qua `EMBED_BACKEND` (`auto`: model chứa `bge` → bge, prefix `Qwen/` → custom, còn lại → openai). BGE-M3 text-only: chunk ảnh **không** kèm ảnh bytes — ảnh hiện diện trong vector qua caption tiếng Việt do stage describe (Gemini) sinh (mục 5.3). Máy A chỉ gọi HTTP — không cài torch/transformers, không cần GPU cho embed.
 
 ## 2. Quyết định nguồn nội dung
 
@@ -61,11 +61,11 @@ Doc `minio_parse` không có `file_path` thì lỗi (`ValueError`).
 |---|---|---|
 | Mongo DB | `RAG_DB` = `organization_db` | dùng chung DB với backend ami_data |
 | Registry / DocStatusStore | `organization_db.multimodal_rag_documents` (`RAG_DOCUMENTS_COLLECTION`) | một dòng/doc, `_id` = ObjectId dạng string, ghi bởi worker/CLI/admin |
-| Qdrant | `QDRANT_URL` | vector chunk, collection `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` (ví dụ `multimodal__llama-nemotron-embed-vl-1b-v2__v1`) |
+| Qdrant | `QDRANT_URL` | vector chunk, collection `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` (ví dụ hiện tại `multimodal__bge-m3__v2`) |
 | MinIO asset | `{ASSET_PREFIX}/{doc_id}/` (`rag-assets/…`) trong `MINIO_BUCKET` | ảnh/bảng/công thức (tên `sha256[:16]` + ext), `content_list.json`, `descriptions.json`, `chunks.json` |
 | Nguồn doc | `organization_db.documents` (`ORG_DB`/`DOC_COLLECTION`) | **chỉ đọc**, lọc `status: "active"` khi duyệt toàn bộ |
 
-Quy ước collection vector (`ami_rag/core/embedder.py::collection_name`): `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` — đổi embed model hoặc `CHUNKER_VERSION` là sang collection mới, không bao giờ trộn vector hai embed model.
+Quy ước collection vector (`ami_rag/core/embedder.py::collection_name`): `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` — đổi embed model hoặc `CHUNKER_VERSION` là sang collection mới, không bao giờ trộn vector hai embed model. Slug lấy từ phần sau `/` của `EMBED_MODEL` (`BAAI/bge-m3` → `bge-m3`), nên collection hiện tại là `multimodal__bge-m3__v2`. Collection mới dùng **named vectors** `dense` + `sparse` (hybrid, mục 5.6); collection legacy 1 vector vô danh không bổ sung được sparse (mục 5.6).
 
 Ranh giới:
 
@@ -161,17 +161,18 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | | `OCR_FALLBACK_TIMEOUT` / `OCR_FALLBACK_RETRIES` | `300` / `1` | giây; retry chỉ 429/5xx/transport |
 | | `OCR_FALLBACK_ON_EMPTY` | `true` | primary trả rỗng cũng chuyển fallback (`false` = chỉ fallback khi lỗi) |
 | | `OCR_FALLBACK_MODES` | `text,table` | tắt riêng từng loại: `text` / `table` / `""` (tắt hết); giá trị lạ → lỗi lúc khởi động |
-| Embed server | `EMBED_SERVER_URL` | `http://localhost:8080` | trỏ đúng server tương ứng `EMBED_BACKEND` (gateway nemotron-vl-vllm: 8080; qwen-embedding-server: 8007) |
-| | `EMBED_SERVER_TOKEN` | rỗng | **chỉ từ env**, không ghi vào file trong git |
-| | `EMBED_MODEL` | `nvidia/llama-nemotron-embed-vl-1b-v2` | dùng để xác minh với server lúc handshake |
-| | `EMBED_BACKEND` | `auto` | `auto` / `custom` (qwen-embedding-server: `/info` + `/embed`) / `openai` (gateway nemotron-vl-vllm: `/health` + `/v1/embeddings` với `{"input", "input_type"}`); auto: prefix `Qwen/` → custom, còn lại → openai |
-| | `EMBED_DIM` | `2048` | để xác minh (dim thực tế do server quyết định) |
+| Embed server | `EMBED_SERVER_URL` | `http://localhost:8008` | trỏ đúng server tương ứng `EMBED_BACKEND` (embedding-server BGE-M3: 8008) |
+| | `EMBED_SERVER_TOKEN` | rỗng | **chỉ từ env** (key trùng `BGE_API_KEY` trong `.env` của server), không ghi vào file trong git |
+| | `EMBED_MODEL` | `BAAI/bge-m3` | dùng để xác minh với server lúc handshake |
+| | `EMBED_BACKEND` | `bge` | `auto` / `custom` (qwen-embedding-server: `/info` + `/embed`) / `openai` (gateway nemotron: `/health` + `/v1/embeddings`) / `bge` (embedding-server: `/v1/models` + `/embed`); auto: model chứa `bge` → bge, prefix `Qwen/` → custom, còn lại → openai |
+| | `EMBED_DIM` | `1024` | để xác minh (dim thực tế do server quyết định) |
 | | `EMBED_TIMEOUT` | `60` | giây |
-| | `EMBED_BATCH_SIZE` | `32` | số item mỗi request |
+| | `EMBED_BATCH_SIZE` | `32` | số item mỗi request — **không vượt 64** (giới hạn server BGE-M3) |
 | | `EMBED_MAX_CONCURRENCY` | `4` | số request đồng thời |
 | | `EMBED_RETRIES` | `3` | retry cho lỗi tạm thời (timeout/5xx/429) |
-| | `EMBED_MAX_INPUT_TOKENS` | `6000` | budget token mỗi item embed (máy A không tokenizer, xấp xỉ ~3 chars/token); item vượt bị cắt đầu trước khi gửi — content đầy đủ vẫn lưu Qdrant. Default tính cho gateway `max_model_len=8192`; server chạy 4096 thì giảm qua env |
-| | `EMBED_IMAGE_TOKEN_RESERVE` | `1792` | một ảnh Nemotron VL tốn tối đa ~1792 visual token (6 tile + thumbnail) — budget text kèm ảnh bị trừ trước |
+| | `EMBED_MAX_INPUT_TOKENS` | `8192` | budget token mỗi item embed (máy A không tokenizer, xấp xỉ ~3 chars/token); item vượt bị cắt đầu trước khi gửi — content đầy đủ vẫn lưu Qdrant. Default = max seq của BGE-M3; server chạy thấp hơn thì giảm qua env |
+| | `EMBED_IMAGE_TOKEN_RESERVE` | `0` | BGE-M3 text-only không kèm ảnh → không trừ budget token ảnh |
+| | `EMBED_RETURN_SPARSE` | `true` | xin thêm `sparse_weights` từ server cho hybrid Qdrant (mục 5.6); cache embedding chỉ giữ dense |
 | | `EMBED_CACHE_ENABLED` | `true` | cache embedding SQLite ở máy A |
 | | `EMBED_CACHE_PATH` | `./embed_cache.db` | |
 | Mongo | `MONGO_URI` | `mongodb://localhost:27017/?directConnection=true` | |
@@ -202,15 +203,15 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | | `WORKER_MAX_DELIVERY` | `3` | |
 | | `WORKER_RETRY_IDLE_MS` | `600000` | Sau bao lâu (ms) message pending lỗi được giao lại |
 | | `WORKER_METRICS_PORT` | `9109` | `/metrics` của `ami-rag-worker` |
-| Rerank | `RERANK_BASE_URL` | `http://localhost:8080` | gateway nemotron-vl-vllm phục vụ cả embed + rerank |
-| | `RERANK_MODEL` | `nvidia/llama-nemotron-rerank-vl-1b-v2` | rỗng hoặc chứa `bge` → legacy BGE (documents text-only) |
-| | `RERANK_BACKEND` | `auto` | `auto` / `legacy` (BGE) / `vllm` (Nemotron VL, multimodal) |
-| | `RERANK_MULTIMODAL` | `true` | chỉ với backend `vllm`: chunk image/table/equation có asset_key kèm ảnh (data URI từ MinIO) + text |
+| Rerank | `RERANK_BASE_URL` | `http://localhost:8010` | service BGE reranker (repo `rerank`, text-only) |
+| | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | rỗng hoặc chứa `bge` → legacy BGE (documents text-only) |
+| | `RERANK_BACKEND` | `legacy` | `legacy` (BGE) / `vllm` (gateway nemotron — đã thay bằng bộ BGE) / `auto` |
+| | `RERANK_MULTIMODAL` | `false` | chỉ backend `vllm` dùng (chunk kèm ảnh data URI từ MinIO); legacy BGE text-only luôn tắt |
 | | `RERANK_TOP_K` | `5` | số tài liệu trả về mặc định khi request không chỉ định `top_k` |
 | | `RERANK_TIMEOUT` | `60` | giây |
 | | `RERANK_MAX_INPUT_TOKENS` | `6000` | budget token text mỗi document rerank; vượt bị cắt đầu (kèm ảnh → trừ `RERANK_IMAGE_TOKEN_RESERVE`) — rerank server cùng vLLM giới hạn `max_model_len` |
 | | `RERANK_IMAGE_TOKEN_RESERVE` | `1792` | như `EMBED_IMAGE_TOKEN_RESERVE` |
-| | `RERANK_FUSION` | `raw` | `raw` (so điểm tuyệt đối - hành vi cũ) / `rrf` (so hạng nội bộ 2 nhóm modality qua RRF + sàn điểm, chỉ backend `vllm`) |
+| | `RERANK_FUSION` | `raw` | `raw` (so điểm tuyệt đối - hành vi cũ) / `rrf` (so hạng nội bộ 2 nhóm modality qua RRF + sàn điểm) — `rrf` hoạt động cả legacy (legacy trả full scores) |
 | | `RERANK_RRF_K` | `10` | hằng số RRF: `fused = weight / (rrf_k + rank)` |
 | | `RERANK_VISUAL_WEIGHT` | `0.8` | weight nhóm image trong RRF (nhóm còn lại = 1.0, mã hoá prior text) |
 | | `RERANK_VISUAL_FLOOR` | `0.01` | raw score dưới floor nhóm image bị chặn không được promote (xếp cuối theo raw) |
@@ -289,17 +290,17 @@ Khuyến nghị:
 
 ### 5.2 Embed server (máy B) và Redis (đã gặp thực tế)
 
-- Embedding + rerank chạy trên **server riêng** ở máy B, chọn qua `EMBED_BACKEND`:
-  - **`openai` (mặc định)**: repo `nemotron-vl-vllm` (máy B, port 8080) — gateway FastAPI trước 2 vLLM (`nvidia/llama-nemotron-embed-vl-1b-v2` + `nvidia/llama-nemotron-rerank-vl-1b-v2`, vLLM ≥ 0.17.0 với template override; gateway nhận text/ảnh base64/bảng, fan-out batch song song xuống vLLM). Contract gateway: `GET /health` (200 khi cả hai sẵn sàng), `POST /v1/embeddings` với `{"input": [items], "input_type": "query"|"document"}` (item `str` | `{"text":..., "image": <base64>}` | `{"content": [parts]}`), `POST /v1/rerank` (alias `/rerank`) với `{query, documents, top_n}` → `{results: [{index, relevance_score}]}`. Client `OpenAIEmbedder` (`ami_rag/core/openai_embedder.py`): handshake `/health` + probe embed 1 lần lấy dim, batch `EMBED_BATCH_SIZE` item/request.
-  - **`custom`**: `qwen-embedding-server/` (repo ngoài RAG-Anything, port 8007), model `Qwen/Qwen3-VL-Embedding-2B`: dim 2048 (MRL 64–2048), last-token pooling + L2 normalize, instruction qua system message, `transformers>=4.57`/`qwen-vl-utils>=0.0.14`. Tổng quan: `docs/qwen_embedding_notes.md`.
-- Rerank mặc định qua gateway `nemotron-vl-vllm` (documents text hoặc multimodal `{"content": [text/image_url parts]}`): chunk image/table/equation có `asset_key` được kèm ảnh render từ MinIO (`RERANK_MULTIMODAL`); thiếu ảnh thì rơi về text. Score là logit (có thể âm), chỉ dùng so thứ hạng — giống legacy BGE.
-- **Fusion 2 nhóm (`RERANK_FUSION`, mặc định `raw`)**: điểm cross-encoder không so sánh được giữa chunk image (thấp ~0.02–0.15, chỉ suy luận qua visual tokens) và text/table (cao ~0.15–0.65, khớp keyword trực tiếp), nên khi so điểm tuyệt đối trong 1 danh sách chung ảnh luôn bị text đè. `rrf` khắc phục: rerank xin **full scores** (`top_n` = toàn bộ candidates — gateway chấm điểm mọi documents rồi mới cắt, không tốn thêm GPU) rồi so **hạng nội bộ** từng nhóm qua RRF `fused = weight_m / (rrf_k + rank_m)` (nhóm image dùng `RERANK_VISUAL_WEIGHT`, nhóm còn lại 1.0), kèm **sàn điểm tuyệt đối** — item dưới floor của nhóm mình bị chặn không được promote (xếp cuối theo raw) để tránh đẩy ảnh rác lên top khi query thuần text. Response giữ nguyên `score` = raw relevance (không đổi ngữ nghĩa); thứ tự documents theo fused; `meta.fusion` = `"raw"|"rrf"` cho biết cấu hình đã áp dụng (legacy BGE luôn `raw`). Tune weight/floor qua `scripts/eval_rerank_fusion.py` trên bộ test server (Recall@k/MRR theo nhóm + paired win/tie/loss + phân bố điểm relevant/irrelevant).
-- `OpenAIEmbedder`/`RemoteEmbedder` handshake lúc khởi tạo: so model (và dim — probe embed 1 lần với `OpenAIEmbedder`); lệch thì dừng với lỗi rõ ràng (không ghi vector khi chưa xác minh). Mỗi response được kiểm tra model để phát hiện server bị đổi model giữa chừng.
-- Retry chỉ cho lỗi tạm thời (timeout, 5xx, 429, mất kết nối), backoff + jitter; **không retry** 4xx. Circuit breaker: 5 lô liên tiếp không với tới server thì dừng cả lô sớm (doc chưa xử lý không bị đánh fail hàng loạt). Lỗi `embed server unreachable` trong một doc không làm hỏng doc khác.
+- Embedding + rerank chạy trên **server riêng** ở máy B. Bộ cũ gateway `nemotron-vl-vllm` (8080) + `qwen-embedding-server` (8007) **đã thay bằng bộ BGE** (2 service mới, chọn qua `EMBED_BACKEND`/`RERANK_BACKEND`):
+  - **`bge` (mặc định)**: repo `embedding-server` (port **8008**), model **`BAAI/bge-m3`** — dense 1024 + sparse lexical weights, text-only, max_length 8192. Contract: `GET /v1/models` → `{"data": [{"id": "BAAI/bge-m3", ...}]}` (handshake so model); `POST /embed` với `{"texts": [str], "return_dense": true, "return_sparse": bool}` → `{"dense_vecs": [[float, ...]], "sparse_weights": [{"<token_id>": weight, ...}]}` (token_id dạng **chuỗi**); auth `Authorization: Bearer <EMBED_SERVER_TOKEN>` (trùng `BGE_API_KEY` trong `.env` của server; thiếu/sai → 401). Server nhận tối đa **64 text/request** (vượt → 400) nên `EMBED_BATCH_SIZE` không được đặt vượt 64; text rỗng/whitespace → server 400 (client thay bằng `"."`); 413/422 payload lớn, 429/5xx/504 transient (retry). Client `BGEM3Embedder` (`ami_rag/core/bge_embedder.py`): handshake = `/v1/models` + probe `/embed` 1 lần chốt dim, batch `EMBED_BATCH_SIZE` + `EMBED_MAX_CONCURRENCY`.
+  - **Caption-only cho ảnh**: `_prepare_embed_items` (`vector_pipeline.py`) luôn trả **`list[str]`** (nội dung chunk) — **không nạp ảnh bytes** cho embed. BGE-M3 không nhận ảnh; ảnh hiện diện trong vector qua caption tiếng Việt do stage describe (Gemini) sinh (mục 5.3). Item còn mang `image_b64` (embedder fake/test) bị bỏ kèm log warning, không raise.
+  - **Sparse → Qdrant**: server trả `sparse_weights` là dict `token_id → weight`; client `_to_sparse` sắp token_id tăng dần rồi gói `{"indices": [...], "values": [...]}` thành `SparseVector` khi upsert (mục 5.6). `EMBED_RETURN_SPARSE=true` mặc định; cache embedding chỉ chứa **dense** — luồng sparse luôn gọi server (`embed_documents_sparse` dùng `use_cache=False`), không cache sparse riêng.
+- Rerank **legacy BGE `BAAI/bge-reranker-v2-m3`** trên port **8010** (repo `rerank`): documents **text-only**, tối đa **100 documents/request** (client batch nội bộ); `RERANK_MULTIMODAL=false` (không nhận ảnh). Score là logit (có thể âm), chỉ dùng so thứ hạng. Lỗi rerank → trả chunk không điểm (fallback, `rerank_fallback_total`).
+- **Fusion 2 nhóm (`RERANK_FUSION`)**: điểm cross-encoder không so sánh được giữa chunk image (thấp, chỉ suy luận gián tiếp) và text/table (cao, khớp keyword trực tiếp) khi so điểm tuyệt đối trong 1 danh sách chung. `rrf`: rerank xin **full scores** (`top_n` = toàn bộ documents) rồi so **hạng nội bộ** từng nhóm qua RRF `fused = weight_m / (rrf_k + rank_m)`, kèm sàn điểm tuyệt đối — item dưới floor nhóm mình bị chặn không được promote. **`rrf` giờ hoạt động cả legacy**: legacy trả full scores nên không còn gate theo backend `vllm`. Response giữ nguyên `score` = raw relevance (không đổi ngữ nghĩa); thứ tự documents theo fused; `meta.fusion` = `"raw"|"rrf"` cho biết cấu hình đã áp dụng. Tune weight/floor qua `scripts/eval_rerank_fusion.py`.
+- Handshake lúc khởi tạo: so model (và dim — probe embed 1 lần); lệch thì dừng với lỗi rõ ràng (không ghi vector khi chưa xác minh). Mỗi response được kiểm tra model/dim để phát hiện server bị đổi model giữa chừng.
+- Retry chỉ cho lỗi tạm thời (timeout, 5xx, 429, mất kết nối), backoff + jitter; **không retry** 4xx (401 token sai, 400 input sai định dạng). Circuit breaker: 5 lô liên tiếp không với tới server thì dừng cả lô sớm — doc chưa xử lý không bị đánh fail hàng loạt. Lỗi `embed server unreachable` trong một doc không làm hỏng doc khác.
 - Cache embedding SQLite ở máy A (`EMBED_CACHE_ENABLED`, key = `model|dim|instruction_ns|sha256(text)`); `reindex --dry-run` dùng `count_cache_hits` để báo trước số chunk trúng cache, không gọi HTTP.
-- **Kích thước input gửi lên máy B** (đã gặp thực tế: vLLM từ chối `decoder prompt ... longer than the maximum model length` với HTTP 400):
-  - Gateway vLLM giới hạn `max_model_len` (khuyến nghị đặt `EMBED/RERANK_MAX_MODEL_LEN=8192` trong `.env` máy B, kèm `*_MAX_NUM_BATCHED_TOKENS >= 8192`; một ảnh tốn tối đa ~1792 visual token).
-  - Client cắt đầu (head-truncate) item vượt budget trước khi gửi: embed qua `EMBED_MAX_INPUT_TOKENS` (trừ `EMBED_IMAGE_TOKEN_RESERVE` khi kèm ảnh), rerank qua `RERANK_MAX_INPUT_TOKENS`. Content đầy đủ vẫn lưu Qdrant payload nên LLM vẫn thấy toàn văn khi trả lời; chỉ vector/rerank tính trên phần đầu.
+- **Kích thước input gửi lên máy B**:
+  - BGE-M3 giới hạn max_length **8192** — server phải chạy 8192, không thì giảm `EMBED_MAX_INPUT_TOKENS` qua env; client head-truncate item vượt budget trước khi gửi (`EMBED_IMAGE_TOKEN_RESERVE=0`). Rerank cắt qua `RERANK_MAX_INPUT_TOKENS`. Content đầy đủ vẫn lưu Qdrant payload nên LLM vẫn thấy toàn văn khi trả lời; chỉ vector/rerank tính trên phần đầu.
   - Qdrant giới hạn request (mặc định 32 MB): `QDRANT_UPSERT_MAX_MB=16` — upsert đóng gói batch theo byte ước lượng (payload + vector) và số điểm; doc nhiều bảng lớn (payload `content` + `table_body`) không còn gộp vượt giới hạn trong một request.
 - Hết credit/quota hay model quá tải trên server (5xx sau retry) → doc ở stage `embed` thành `failed` với lý do rõ ràng; chạy lại `retry` sau khi server ổn định.
 - Redis: `redis-py` ≥ 8 mặc định `socket_timeout=5s`, trùng với `XREADGROUP BLOCK` (`WORKER_POLL_BLOCK_MS`) nên worker báo `queue read failed: Timeout reading from redis`. Client của worker đặt `socket_timeout = WORKER_POLL_BLOCK_MS/1000 + 5` và `health_check_interval=30` (`ingest_worker.py::_build_default_deps`).
@@ -366,6 +367,16 @@ Ba thay đổi ở `ami_rag/core/vector_pipeline.py`:
 
 > Chunking không tự kéo ảnh lên top-k. Đo trên index thật (query "sân bóng đá cơ sở Hà Đông", `scripts/diagnose_query.py`): sau chunk v2, chunk ảnh sơ đồ vẫn xếp hạng 246/1123 ở tầng vector, và **không** phải vì rerank — khi ảnh đã có trong ứng viên thì `raw` fusion xếp nó hạng 1 (0.0158 > 0.0129 của text đầu). Thủ phạm là caption tiếng Anh: xem mục 5.3.
 
+### 5.6 Qdrant hybrid: named vectors `dense` + `sparse`
+
+Collection mới (backend `bge`) do `ensure_collection(sparse=True)` tạo với **named vectors**: `"dense"` (COSINE, `EMBED_DIM`=1024) + `"sparse"` (`SparseVectorParams`) (`ami_rag/core/vector_store.py`). Upsert gói `{"dense": vector, "sparse": SparseVector(indices, values)}`; chunk sparse rỗng (`{}`) chỉ ghi dense.
+
+Search (`ami_rag/api/routes/rag.py::_run_search`):
+- Embedder có `embed_query_sparse` (BGE) → query lấy dense + sparse; sparse query rỗng (0 indices) hoặc embedder legacy (chỉ `embed_query`) → `sparse=None` ⇒ **dense-only**.
+- `sparse` có giá trị ⇒ hybrid: 2 prefetch (`dense` limit k + `sparse` limit k) fuse bằng `FusionQuery(RRF)` ngay tại Qdrant — đây là tầng chọn ứng viên; tầng rerank `RERANK_FUSION=rrf` xếp hạng trên ứng viên đó, hai RRF không trùng nhau.
+
+Collection legacy (pipeline Nemotron/Qwen cũ — 1 vector vô danh, không có sparse config): `ensure_collection(sparse=True)` gặp nó thì lỗi `VectorStoreError` "reindex cần tạo collection mới" — sparse vector không bổ sung được vào collection cũ. Đổi `EMBED_MODEL` ⇒ slug đổi (`bge-m3`) ⇒ collection mới `multimodal__bge-m3__v2` tự sinh; dọn collection cũ bằng `ami-rag cleanup --stale-models`.
+
 ## 6. API
 
 Mọi route `/v2/rag/*` và `/admin/*` yêu cầu `Authorization: Bearer <RAG_API_KEY>` khi `RAG_API_KEY` khác rỗng (rỗng = mở; nên chỉ dùng trong mạng nội bộ). `/`, `/healthz`, `/readyz`, `/metrics` không yêu cầu auth; chặn `/metrics` ở reverse proxy nếu cần.
@@ -391,13 +402,14 @@ Response (rút gọn; mỗi document có đủ các field, giá trị không áp
   "query": "bảng học phí các ngành",
   "documents": [
     { "text": "Đoạn văn mô tả học phí ...", "score": 0.93, "modality": "text",
-      "artifact_url": null, "table_body": null, "page": null, "caption": null,
+      "artifact_url": null, "artifact_urls": [], "table_body": null, "page": null, "caption": null,
       "reference_id": "<chunk_id>",
       "metadata": {"source": "665f..._hocphi.pdf", "page": null, "document_id": "665f...", "chunk_index": null, "global_id": "<chunk_id>"},
       "doc": {"document_id": "665f...", "title": "Học phí 2026", "document_type": "pdf",
               "organization_unit_id": "...", "file_url": "https://minio/presigned/...", "source_url": null} },
     { "text": "... Asset: rag-assets/665f.../ab12cd34ef567890.png ...", "score": 0.81, "modality": "image",
       "artifact_url": "https://minio/presigned/rag-assets/665f.../ab12cd34ef567890.png",
+      "artifact_urls": ["https://minio/presigned/rag-assets/665f.../ab12cd34ef567890.png"],
       "table_body": null, "page": 2, "caption": "Sơ đồ tổ chức", "reference_id": "<chunk_id>", "doc": {"...": "..."} },
     { "text": "...", "score": 0.77, "modality": "table",
       "artifact_url": null, "table_body": "| Ngành | Học phí |\n| --- | --- |\n| CNTT | 30tr |",
@@ -408,7 +420,7 @@ Response (rút gọn; mỗi document có đủ các field, giá trị không áp
 }
 ```
 
-Luồng: `embed_query` (máy B) → vector search Qdrant (`max(RETRIEVAL_CHUNK_TOP_K, top_k * RETRIEVAL_OVERFETCH)` ứng viên) → rerank service (`RERANK_FUSION=rrf` thì xin full scores + fuse 2 nhóm modality, xem mục Rerank) → trả `top_k` document đầu.
+Luồng: `embed_query` (máy B) → vector search Qdrant (hybrid dense+sparse khi query có sparse, mục 5.6; `max(RETRIEVAL_CHUNK_TOP_K, top_k * RETRIEVAL_OVERFETCH)` ứng viên) → rerank service (`RERANK_FUSION=rrf` thì xin full scores + fuse 2 nhóm modality, xem mục Rerank) → trả `top_k` document đầu.
 
 **Chẩn đoán 1 query** khi kết quả không như mong đợi (ảnh không lên top-k, chunk trả về vô nghĩa…): `scripts/diagnose_query.py` in ra hạng + điểm vector của từng ứng viên, điểm rerank raw, và kết luận rõ ảnh rơi ở tầng nào.
 
@@ -424,6 +436,7 @@ python scripts/diagnose_query.py --query "..." --output diag.json   # lưu lại
 - `top_k` (1..200) là số document trả về cuối cùng (mặc định `RERANK_TOP_K` khi không gửi).
 - `modality`: `text` | `image` | `table` | `equation` (từ `original_type` của chunk multimodal).
 - `artifact_url`: presigned URL (hết hạn sau `MINIO_PRESIGN_EXPIRES`) của `asset_key`; `null` khi chunk không có asset hoặc presign lỗi (tăng `presign_failures_total`).
+- `artifact_urls`: danh sách presigned của **mọi ảnh của doc** (`asset_store.presign_doc_images` — ảnh crawl section `Hình ảnh` + ảnh pdf/table, mục 2). Trả cho cả chunk text (kết quả chỉ-text vẫn kèm đường dẫn ảnh của doc), giúp client xem trọn bộ ảnh doc; doc không resolve được qua Mongo hoặc store lỗi/missing method → `[]` (key giữ nguyên shape).
 - `references`: dedup theo document, chỉ có khi `include_references: true`.
 - Lỗi rerank → trả chunk không điểm (fallback, đo `rerank_fallback_total`).
 
@@ -450,7 +463,7 @@ CLI phục vụ 4 việc: xem trạng thái doc, chạy lại doc lỗi/hỏng, 
 ```bash
 ami-rag status [--failed] [--stale] [--doc <id|path>] [--check-embed-server]
 ami-rag retry (--doc <id|path> [...] | --all-failed) [--from-stage S] [--max-attempts N] [--yes]
-ami-rag reindex [--stale | --all | --doc <id|path> [...]] [--scan] [--from-stage S] [--dry-run] [--yes]
+ami-rag reindex [--stale | --all | --doc <id|path> [...]] [--scan] [--from-stage S] [--dry-run] [--yes] [--limit N] [--sleep S] [--batch B] [--batch-sleep S]
 ami-rag cleanup [--dry-run] [--mongo-only | --qdrant-only] [--yes]
 ```
 
@@ -491,28 +504,25 @@ In workspace, config đang dùng (`embed_model`/`embed_dim`/`chunker_version`), 
 | `--dry-run` | - | in số doc, số chunk cần embed, số chunk trúng cache; không gọi embed, không ghi gì |
 | `--yes` | hỏi xác nhận | bỏ qua xác nhận |
 | `--embed-server-url` / `--embed-batch-size` | - | override tối thiểu |
+| `--limit N` | `0` | chỉ xử lý N doc đầu (0 = không giới hạn); cắt ngay sau khi chọn — áp dụng cả `--dry-run` nên preview đúng scope |
+| `--sleep S` | `0.2` | giây nghỉ giữa hai doc liên tiếp |
+| `--batch B` | `20` | số doc mỗi lô (0 = một lô duy nhất) |
+| `--batch-sleep S` | `2.0` | giây nghỉ khi vào lô mới (ngoài lô đầu) — tính theo vị trí thứ tự, doc fail không restart lô |
 
 - Trước khi embed, kiểm tra tương thích `embed_model`/`embed_dim`/`chunker_version` với collection đích (qua preflight `/info`).
 - Khoá bất đồng bộ: lệnh từ chối chạy nếu một `retry`/`reindex` khác đang giữ lockfile.
-- **Doc index trước khi có caption Gemini (mục 5.3)** mang `descriptions.json` với mô tả ảnh rỗng/dict-repr — chạy `--from-stage describe` để sinh lại mô tả + chunk + embed:
+- **Migration sang BGE-M3 + hybrid Qdrant (nhiệm vụ hiện hành)**: `EMBED_MODEL` đổi sang `BAAI/bge-m3` (dim 1024) ⇒ collection đích tự thành `multimodal__bge-m3__v2` với named vectors `dense`+`sparse` (mục 5.6). `--from-stage embed` **dùng lại `chunks.json` đã lưu trong MinIO** — không parse/describe/chunk lại, không gọi LLM/Gemini:
   ```bash
-  ami-rag reindex --all --from-stage describe --dry-run   # xem phạm vi trước
-  ami-rag reindex --all --from-stage describe --yes       # hoặc --doc <id> để thử vài doc
+  ami-rag status --check-embed-server                          # embed :8008 + rerank :8010 sẵn sàng
+  ami-rag reindex --stale --from-stage embed --dry-run         # phạm vi + số chunk trúng cache
+  ami-rag reindex --stale --from-stage embed --limit 20 --yes  # thử lô nhỏ trước, kiểm tra retrieve trước khi chạy thật
+  ami-rag reindex --stale --from-stage embed --batch 20 --sleep 0.2 --batch-sleep 2.0 --yes
   ```
-  Chi phí: mỗi ảnh đúng **1 call Gemini** (~vài giây, không còn ~30s OCR/ảnh; mode `none` = 0 call LLM); collection Qdrant **không đổi** vì `EMBED_MODEL` giữ nguyên — chỉ chunk ảnh đổi text nên cache embedding miss → re-embed các chunk ảnh (text chunk không đổi vẫn trúng cache).
-- **Doc crawl index trước khi có tính năng ảnh crawl** (mục 2): content_list chỉ có text (không item image). Parse lại từ đầu để tải ảnh + strip section `Hình ảnh` khỏi text:
-  ```bash
-  ami-rag reindex --all --from-stage parse --dry-run   # xem phạm vi trước
-  ami-rag reindex --all --from-stage parse --yes       # hoặc --doc <id> cho từng bài crawl
-  ```
-  Chú ý: `--from-stage parse` parse lại cả PDF/DOCX bằng MinerU (tốn GPU); nếu kho có nhiều file lớn, ưu tiên `--doc <id>` cho riêng doc crawl. Bài crawl sửa nội dung sau này tự chạy đúng luồng mới (ảnh là một phần stage parse, không cần env bật).
-- **Sau khi nâng `CHUNKER_VERSION` (mục 5.5)**: collection đích đổi nên phải reindex lại toàn bộ; stage `chunk` **không gọi LLM/Gemini** (đọc `content_list.json` + `descriptions.json` trong MinIO):
-  ```bash
-  ami-rag reindex --all --from-stage chunk --dry-run   # xem phạm vi + số chunk trúng cache
-  ami-rag reindex --all --from-stage chunk --yes
-  ```
-  Xoá collection cũ sau khi kiểm tra index mới: `ami-rag cleanup --stale-models`.
-- **Sau khi đổi `CAPTION_LLM_LANGUAGE` (mục 5.3)**: `--from-stage describe` để sinh lại mô tả ảnh bằng ngôn ngữ mới (chỉ tốn call Gemini cho ảnh).
+  - **Điều kiện**: doc phải đã có `chunks.json` (đã qua chunk). Doc chỉ có `content_list.json` → bỏ `--from-stage` cho per-doc tự chọn (nó chọn `chunk` — không gọi LLM — khi `content_list` có trong MinIO) và chạy `--yes` trực tiếp.
+  - **Ngắt quãng / resume / lặp vô hạn**: doc xong embed được đánh dấu `indexed` kèm `embed_model` mới trong registry → effective không còn `stale`; doc chưa xong giữ `embed_model` cũ ⇒ vẫn `stale` và được lệnh `--stale` (mặc định) chọn lại. Đường dẫn resume = chạy lại cùng lệnh đến khi `ami-rag status` không còn doc `stale`; ngắt giữa chừng an toàn (stage embed luôn `delete_by_doc` trước khi upsert). Doc lỗi nằm ở `failed` kèm `error_stage`, xử lý `retry --from-stage embed`.
+  - `--limit`/`--sleep`/`--batch`/`--batch-sleep` để chia lượt chậm, đè nhẹ embed/rerank server khi chạy cả nghìn doc; `--dry-run` vẫn tính đúng scope sau `--limit`.
+  - Index mới OK (so sánh retrieve + live test `tests/test_retrieval_recall_live.py`) mới dọn: `ami-rag cleanup --stale-models --purge-cache-model "nvidia/llama-nemotron-embed-vl-1b-v2" --yes`.
+- Các tình huống khác (lịch sử, cùng cơ chế): sinh lại caption ảnh `--from-stage describe` (1 call Gemini/ảnh, mục 5.3); doc crawl cũ chưa có ảnh `--from-stage parse` (mục 2); nâng `CHUNKER_VERSION` `--from-stage chunk` (mục 5.5).
 
 Mã thoát: `0` xong, `1` một số doc thất bại, `2` dừng sớm (preflight embed server, lockfile, validation).
 
@@ -687,7 +697,7 @@ Ngoài ra có test **live** (`tests/test_retrieval_recall_live.py`, bộ case `t
 
 ## 11. Phiên bản
 
-`pyproject.toml` không còn `lightrag-hku` — LightRAG đã gỡ hoàn toàn khỏi dependency. Extra `service` thêm FastAPI, uvicorn, pydantic-settings, redis, pymongo, qdrant-client, httpx, minio, prometheus-client, OpenTelemetry, openai. Embedding service nằm ở repo ngoài `qwen-embedding-server` (máy B, port 8007), máy A không cài torch/transformers. Entry point: `ami-rag-api`, `ami-rag-worker`, `ami-rag`.
+`pyproject.toml` không còn `lightrag-hku` — LightRAG đã gỡ hoàn toàn khỏi dependency. Extra `service` thêm FastAPI, uvicorn, pydantic-settings, redis, pymongo, qdrant-client, httpx, minio, prometheus-client, OpenTelemetry, openai. Embedding service nằm ở repo ngoài `embedding-server` (BGE-M3, máy B, port 8008), máy A không cài torch/transformers. Entry point: `ami-rag-api`, `ami-rag-worker`, `ami-rag`.
 
 `mineru[core]>=3.4.1,<4`: MinerU 4.x đổi CLI (`mineru parse <path>`, `-p` = pages) nên không tương thích với lệnh `mineru -p <file> -o <dir> -m ...` mà `raganything/parser.py` gọi; bắt buộc ghim `<4`. MinerU 3.4.x mặc định backend `hybrid-engine` (nặng VRAM) khi không truyền `-b`, và chọn thiết bị bằng biến môi trường `MINERU_DEVICE_MODE` (không có cờ `-d`); `MINERU_VIRTUAL_VRAM_SIZE` (GB) buộc MinerU chọn batch size như thể GPU có chừng đó VRAM.
 
