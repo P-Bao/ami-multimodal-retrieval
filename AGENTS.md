@@ -48,7 +48,7 @@ Trạng thái: **code xong, chưa reindex** (branch `feature/backend-data-parser
 
 ## Nội dung
 1. **Embed BGE-M3** — `ami_rag/core/bge_embedder.py` (`BGEM3Embedder`): server `bge-m3-embed:8008` (repo `embedding-server`, auth `Bearer BGE_API_KEY`, tối đa 64 text/request, max_length 8192). `POST /embed {texts:[str], return_dense, return_sparse}` → `{dense_vecs, sparse_weights[{token_id: w}]}`; `_to_sparse` đổi `sparse_weights` → `SparseVector{indices, values}` (sort token_id). Handshake `GET /v1/models` + probe `/embed` chốt dim. Embed-only **caption-only**: `_prepare_embed_items` trả `list[str]` (không embed ảnh bytes); caption ảnh tiếng Việt do describe stage (Gemini) sinh.
-2. **Hybrid Qdrant** — named vectors `dense` (1024 COSINE) + `sparse`; query `sparse=None` → dense-only; collection legacy (1 vector vô danh) + cần sparse → `VectorStoreError` (không bổ sung được — phải collection mới); `EMBED_MODEL` đổi ⇒ collection mới tự sinh `multimodal__bge-m3__v2` (slug từ `EMBED_MODEL`).
+2. **Hybrid Qdrant** — named vectors `dense` (1024 COSINE) + `sparse`; query `sparse=None` → dense-only; collection legacy (1 vector vô danh) + cần sparse → `VectorStoreError` (không bổ sung được — phải collection mới); `EMBED_MODEL` đổi ⇒ collection mới tự sinh `multimodal__bge-m3__v1` (slug từ `EMBED_MODEL`).
 3. **Rerank legacy BGE** — `bge-reranker-v2-m3` :8010 (repo `rerank`, documents text-only, tối đa 100/request batch nội bộ), `RERANK_MULTIMODAL=False`; `RERANK_FUSION=rrf` giờ hoạt động cả legacy (legacy trả full scores). API trả `RetrievedDocV2.artifact_urls: list[str]` — presigned của mọi ảnh doc qua `presign_doc_images` (crawl + pdf đều trả; doc không resolve → `[]`), giữ `artifact_url`.
 4. **CLI reindex ngắt quãng** — `--limit N` (0=all), `--sleep S` giây giữa doc (mặc định 0.2), `--batch B` (20), `--batch-sleep S` (2.0); `--from-stage embed` dùng lại `chunks.json` (không parse/describe).
 5. Settings (nguồn sự thật `ami_rag/settings.py`): `EMBED_BACKEND=bge`, `EMBED_SERVER_URL=http://localhost:8008`, `EMBED_MODEL=BAAI/bge-m3`, `EMBED_DIM=1024`, `EMBED_MAX_INPUT_TOKENS=8192`, `EMBED_IMAGE_TOKEN_RESERVE=0`, `EMBED_RETURN_SPARSE=true`, `EMBED_BATCH_SIZE=32` (≤64); `RERANK_BACKEND=legacy`, `RERANK_BASE_URL=http://localhost:8010`, `RERANK_MODEL=BAAI/bge-reranker-v2-m3`, `RERANK_MULTIMODAL=false`; `resolve_embed_backend`: `auto` + model chứa `bge` → `bge`.
@@ -88,7 +88,7 @@ Doc crawl đã index trước tính năng: `ami-rag reindex --all --from-stage p
 
 # Hiện trạng hệ thống (đã hoàn tất — chỉ giữ phần còn giá trị)
 
-Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`, `docs/migration_inventory.md`.
+Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`.
 
 ## Kiến trúc
 - Pipeline vector thuần, **không LightRAG** (không entity/graph/neo4j; chỉ còn param compat `lightrag=None` trong `modalprocessors`/`factory`). Stages: `parse → describe → chunk → embed → indexed`, artifacts trung gian (`content_list.json`/`descriptions.json`/`chunks.json`) lưu MinIO nên retry chạy tiếp từ stage lỗi.
