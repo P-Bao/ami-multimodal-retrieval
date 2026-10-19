@@ -374,6 +374,10 @@ async def cmd_reindex(args, *, settings=None, store=None, runner=None, docs_repo
     else:  # --stale (mặc định)
         selected = [row for row in rows if row["effective"] == STATUS_STALE]
 
+    # --limit cắt ngay sau khi chọn (trước cả --dry-run) để preview đúng số doc sẽ chạy thật.
+    if args.limit:
+        selected = selected[: args.limit]
+
     if not selected:
         print("không có doc nào cần reindex")
         return 0
@@ -411,8 +415,15 @@ async def cmd_reindex(args, *, settings=None, store=None, runner=None, docs_repo
         return 2
 
     ok = failed_n = 0
+    batch = args.batch if args.batch > 0 else len(selected)  # 0 = một lô duy nhất
     try:
-        for row in selected:
+        for idx, row in enumerate(selected):
+            # Nghỉ ngắt quãng: batch_sleep khi vào lô mới (ngoài lô đầu), sleep giữa
+            # các doc trong cùng lô; tính theo vị trí thứ tự nên doc fail không restart lô.
+            if idx and idx % batch == 0:
+                await asyncio.sleep(args.batch_sleep)
+            elif idx:
+                await asyncio.sleep(args.sleep)
             try:
                 outcome = await runner.run(
                     row["_id"], from_stage=_from_stage_for(row, from_stage, runner)
@@ -630,6 +641,18 @@ def main() -> None:
     p_reindex.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
     p_reindex.add_argument("--embed-server-url", default=None, help="override EMBED_SERVER_URL")
     p_reindex.add_argument("--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE")
+    p_reindex.add_argument(
+        "--limit", type=int, default=0, help="chỉ xử lý N doc đầu (0 = không giới hạn)"
+    )
+    p_reindex.add_argument(
+        "--sleep", type=float, default=0.2, help="giây nghỉ giữa hai doc liên tiếp"
+    )
+    p_reindex.add_argument(
+        "--batch", type=int, default=20, help="số doc mỗi lô (0 = một lô duy nhất)"
+    )
+    p_reindex.add_argument(
+        "--batch-sleep", type=float, default=2.0, help="giây nghỉ giữa hai lô"
+    )
 
     p_cleanup = sub.add_parser(
         "cleanup",

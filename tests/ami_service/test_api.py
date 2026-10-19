@@ -9,7 +9,7 @@ from ami_rag.api.routes import admin as admin_routes
 from ami_rag.api.routes import rag as rag_routes
 from ami_rag.settings import get_settings
 
-from .conftest import FakeRerank
+from .conftest import FakeAssetStore, FakeRerank, FakeVectorStore
 
 
 @pytest.fixture
@@ -107,6 +107,7 @@ async def test_exact_contract_shape(client):
             "doc",
             "modality",
             "artifact_url",
+            "artifact_urls",
             "table_body",
             "page",
             "caption",
@@ -280,6 +281,119 @@ async def test_presign_failure_gives_null_artifact_url(client, fake_asset_store)
     assert all(d["artifact_url"] is None for d in resp.json()["documents"])
     # presign chỉ gọi khi chunk có asset_key; không có asset -> không tăng
     assert PRESIGN_FAILURES_TOTAL._value.get() >= before
+
+
+# --- artifact_urls + hybrid sparse search ------------------------------------------------
+
+
+class _ImageAssetStore(FakeAssetStore):
+    """Thêm list_doc_images/presign_doc_images theo contract MinioAssetStore."""
+
+    def list_doc_images(self, doc_id):
+        return [f"rag-assets/{doc_id}/img1.png"]
+
+    def presign_doc_images(self, doc_id):
+        return [f"https://minio/presigned/rag-assets/{doc_id}/img1.png"]
+
+
+class _SpySparseStore(FakeVectorStore):
+    """Ghi nhận kwarg sparse mà search nhận được."""
+
+    def __init__(self):
+        super().__init__()
+        self.search_sparse: list = []
+
+    async def search(self, collection, vector, top_k, *, sparse=None):
+        self.search_sparse.append(sparse)
+        return await super().search(collection, vector, top_k, sparse=sparse)
+
+
+class _LegacyEmbedder:
+    """Embedder cũ: chỉ embed_query, không có embed_query_sparse."""
+
+    def __init__(self, dim=8):
+        self.dim = dim
+
+    async def embed_query(self, text):
+        return [0.2] * self.dim
+
+
+class _EmptySparseEmbedder(_LegacyEmbedder):
+    async def embed_query_sparse(self, text):
+        return ([0.2] * self.dim, {"indices": [], "values": []})
+
+
+async def test_artifact_urls_presigned_doc_images(client, app):
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
+    docs = (await client.post("/v2/rag/", json=BODY)).json()["documents"]
+    assert docs
+    for d in docs:
+        # doc đã resolve: presign_doc_images chạy cho cả crawl lẫn pdf
+        assert d["artifact_urls"] == [
+            f"https://minio/presigned/rag-assets/{d['metadata']['document_id']}/img1.png"
+        ]
+    # chunk có asset_key (ảnh pdf) vẫn giữ artifact_url riêng, trùng URL doc
+    image_doc = next(d for d in docs if d["modality"] == "image")
+    assert image_doc["artifact_url"] == image_doc["artifact_urls"][0]
+
+
+async def test_artifact_urls_empty_for_unresolved_doc(client, app, fake_vector_store):
+    fake_vector_store.points["chunk-orphan"] = {
+        "doc_id": "64b000000000000000000099",
+        "content": "chunk mồ côi không resolve",
+        "modality": "text",
+        "chunk_id": "chunk-orphan",
+    }
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
+    resp = await client.post("/v2/rag/", json={**BODY, "top_k": 10})
+    orphan = next(
+        d for d in resp.json()["documents"] if d["reference_id"] == "chunk-orphan"
+    )
+    assert orphan["doc"] is None
+    assert orphan["artifact_urls"] == []
+
+
+async def test_search_hybrid_passes_sparse_query(client, app, fake_pipeline):
+    spy = _SpySparseStore()
+    spy.points.update(fake_pipeline.vector_store.points)
+    fake_pipeline.vector_store = spy
+    resp = await client.post("/v2/rag/", json=BODY)
+    assert resp.status_code == 200
+    assert len(spy.search_sparse) == 1
+    sparse = spy.search_sparse[0]
+    assert isinstance(sparse, dict)
+    assert sparse["indices"]
+
+
+async def test_search_legacy_embedder_dense_only(client, app, fake_pipeline):
+    spy = _SpySparseStore()
+    spy.points.update(fake_pipeline.vector_store.points)
+    fake_pipeline.vector_store = spy
+    fake_pipeline.embedder = _LegacyEmbedder()
+    resp = await client.post("/v2/rag/", json=BODY)
+    assert resp.status_code == 200
+    assert len(spy.search_sparse) == 1
+    assert spy.search_sparse[0] is None
+
+
+async def test_search_empty_sparse_falls_back_dense_only(client, app, fake_pipeline):
+    spy = _SpySparseStore()
+    spy.points.update(fake_pipeline.vector_store.points)
+    fake_pipeline.vector_store = spy
+    fake_pipeline.embedder = _EmptySparseEmbedder()
+    resp = await client.post("/v2/rag/", json=BODY)
+    assert resp.status_code == 200
+    assert len(spy.search_sparse) == 1
+    assert spy.search_sparse[0] is None
+
+
+async def test_stream_includes_artifact_urls(client, app):
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
+    resp = await client.post("/v2/rag/stream", json=BODY)
+    rows = [json.loads(line) for line in resp.text.splitlines() if line]
+    docs = [doc for row in rows for doc in row.get("documents", [])]
+    assert docs
+    assert all(d.get("artifact_urls") for d in docs)
 
 
 async def test_stream_emits_ndjson(client):

@@ -126,6 +126,26 @@ class FakeEmbedder:
         self.embedded_queries.append(text)
         return [0.2] * self.dim
 
+    @staticmethod
+    def _sparse_from_text(text: str) -> dict:
+        """Deterministic sparse: indices từ md5, values đều 0.5."""
+        import hashlib
+
+        digest = hashlib.md5(text.encode("utf-8")).digest()
+        indices = sorted(int(x) % 100000 for x in digest)
+        return {"indices": indices, "values": [0.5] * len(indices)}
+
+    async def embed_documents_sparse(self, texts):
+        self.embedded_texts.append(list(texts))
+        return (
+            [[0.1] * self.dim for _ in texts],
+            [self._sparse_from_text(t) for t in texts],
+        )
+
+    async def embed_query_sparse(self, text):
+        self.embedded_queries.append(text)
+        return ([0.2] * self.dim, self._sparse_from_text(text))
+
     def count_cache_hits(self, texts):
         return 0
 
@@ -139,15 +159,19 @@ class FakeVectorStore:
     def __init__(self):
         self.points: dict[str, dict] = {}
         self.collections: dict[str, int] = {}
+        self.sparse_collections: set[str] = set()
 
-    async def ensure_collection(self, name: str, dim: int) -> None:
+    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None:
         self.collections[name] = dim
+        # fake không có khái niệm legacy: chỉ ghi nhận sparse đã bật
+        if sparse:
+            self.sparse_collections.add(name)
 
     async def upsert(self, collection, records):
         for r in records:
             self.points[r.id] = dict(r.payload)
 
-    async def search(self, collection, vector, top_k):
+    async def search(self, collection, vector, top_k, *, sparse=None):
         from ami_rag.core.vector_store import SearchHit
 
         return [

@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 ASSET_TYPES = ("image", "table", "equation")
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".webm", ".mp4")
 CONTENT_LIST_NAME = "content_list.json"
 
 _MINIO_POOL_MAXSIZE = 16
@@ -172,6 +173,29 @@ class MinioAssetStore:
         finally:
             response.close()
             response.release_conn()
+
+    def list_doc_images(self, doc_id: str) -> list[str]:
+        """Object keys là ảnh/video media của doc dưới doc prefix (bỏ *.json). Thứ tự ổn định (sorted key)."""
+        prefix = self.doc_prefix(doc_id)
+        keys = [
+            obj.object_name
+            for obj in self._get_client().list_objects(
+                self._bucket, prefix=prefix, recursive=True
+            )
+            if obj.object_name
+            and obj.object_name.startswith(prefix)
+            and Path(obj.object_name).suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        return sorted(keys)
+
+    def presign_doc_images(self, doc_id: str) -> list[str]:
+        """Presigned GET URL cho từng ảnh; key presign lỗi/bỏ qua -> không có trong list."""
+        urls = []
+        for key in self.list_doc_images(doc_id):
+            url = self.presign(key)
+            if url:
+                urls.append(url)
+        return urls
 
     def delete_doc_assets(self, doc_id: str) -> int:
         client = self._get_client()

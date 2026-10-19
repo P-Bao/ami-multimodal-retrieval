@@ -28,9 +28,19 @@ def _point_estimate(p) -> int:
 
     Vector serialize dạng JSON float: ~32 bytes/chiều (số thập phân dài) —
     ước lượng thận trọng hơn thực tế để không vượt giới hạn request.
+    Named vectors: đếm cả dense và sparse (indices+values).
     """
     vector = p.vector
-    vec_len = len(vector) if isinstance(vector, (list, tuple)) else 0
+    if isinstance(vector, dict):
+        vec_len = len(vector.get("dense") or [])
+        sparse = vector.get("sparse")
+        if sparse is not None:
+            indices = getattr(sparse, "indices", None) or (
+                sparse.get("indices") if isinstance(sparse, dict) else None
+            )
+            vec_len += 2 * len(indices or [])
+    else:
+        vec_len = len(vector) if isinstance(vector, (list, tuple)) else 0
     payload_bytes = len(json.dumps(p.payload or {}, ensure_ascii=False).encode("utf-8"))
     return payload_bytes + vec_len * 32 + 256
 
@@ -42,6 +52,8 @@ class ChunkRecord:
     id: str  # chunk_id
     vector: list[float]
     payload: dict = field(default_factory=dict)
+    # sparse đặt SAU payload để giữ tương thích positional ChunkRecord(id, vector, payload)
+    sparse: dict | None = None  # {"indices": [int, ...], "values": [float, ...]}
 
 
 @dataclass
@@ -52,9 +64,11 @@ class SearchHit:
 
 
 class VectorStore(Protocol):
-    async def ensure_collection(self, name: str, dim: int) -> None: ...
+    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None: ...
     async def upsert(self, collection: str, chunks: list[ChunkRecord]) -> None: ...
-    async def search(self, collection: str, vector: list[float], top_k: int) -> list[SearchHit]: ...
+    async def search(
+        self, collection: str, vector: list[float], top_k: int, *, sparse: dict | None = None
+    ) -> list[SearchHit]: ...
     async def delete_by_doc(self, collection: str, doc_id: str) -> int: ...
     async def count(self, collection: str, doc_id: str | None = None) -> int: ...
 
@@ -67,17 +81,26 @@ class QdrantVectorStore:
         url: str = "http://localhost:6333",
         api_key: str | None = None,
         max_request_bytes: int = 16 * 1024 * 1024,
+        *,
+        client=None,
     ):
         from qdrant_client import QdrantClient
 
         self._url = url
-        self._client = QdrantClient(url=url, api_key=api_key or None)
+        # cache: collection đã named-vectors ("dense"+"sparse") hay legacy vô danh
+        self._named: dict[str, bool] = {}
+        self._client = client if client is not None else QdrantClient(url=url, api_key=api_key or None)
         # Giới hạn byte ước lượng mỗi request upsert (server mặc định 32 MB);
         # batch được đóng gói theo byte VÀ số điểm để không vượt giới hạn.
         self.max_request_bytes = max_request_bytes
 
-    async def ensure_collection(self, name: str, dim: int) -> None:
-        """Tạo collection nếu thiếu; kiểm tra tương thích dim với collection có sẵn."""
+    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None:
+        """Tạo collection nếu thiếu; kiểm tra tương thích dim với collection có sẵn.
+
+        sparse=True (hybrid): collection mới dùng named vectors "dense" (COSINE)
+        + "sparse"; collection legacy (1 vector vô danh) không thể bổ sung
+        sparse → phải tạo collection mới (reindex).
+        """
         from qdrant_client.http import models
 
         try:
@@ -90,19 +113,53 @@ class QdrantVectorStore:
             if existing is not None:
                 info = await asyncio.to_thread(self._client.get_collection, name)
                 vectors = info.config.params.vectors
+                if isinstance(vectors, dict):
+                    # named vectors ("dense" tối thiểu)
+                    dense = vectors.get("dense")
+                    size = dense.size if dense is not None else None
+                    if size is not None and size != dim:
+                        raise VectorStoreError(
+                            f"collection '{name}' có dim={size} nhưng cấu hình là {dim}. "
+                            "Đổi EMBED_DIM/EMBED_MODEL hoặc chuyển sang collection mới."
+                        )
+                    if sparse and (info.config.params.sparse_vectors or {}).get("sparse") is None:
+                        raise VectorStoreError(
+                            f"collection '{name}' thiếu sparse vector 'sparse' "
+                            "— reindex cần tạo collection mới."
+                        )
+                    self._named[name] = True
+                    return
+                # legacy: 1 vector vô danh
                 size = vectors.size if vectors is not None else None
+                if sparse:
+                    raise VectorStoreError(
+                        f"collection '{name}' legacy (1 vector vô danh) nhưng cần sparse "
+                        "— reindex cần tạo collection mới."
+                    )
                 if size is not None and size != dim:
                     raise VectorStoreError(
                         f"collection '{name}' có dim={size} nhưng cấu hình là {dim}. "
                         "Đổi EMBED_DIM/EMBED_MODEL hoặc chuyển sang collection mới."
                     )
+                self._named[name] = False
                 return
-            await asyncio.to_thread(
-                self._client.create_collection,
-                collection_name=name,
-                vectors_config=models.VectorParams(size=dim, distance=models.Distance.COSINE),
-            )
-            logger.info("tạo Qdrant collection %s (dim=%s)", name, dim)
+            self._named[name] = sparse
+            if sparse:
+                await asyncio.to_thread(
+                    self._client.create_collection,
+                    collection_name=name,
+                    vectors_config={
+                        "dense": models.VectorParams(size=dim, distance=models.Distance.COSINE)
+                    },
+                    sparse_vectors_config={"sparse": models.SparseVectorParams()},
+                )
+            else:
+                await asyncio.to_thread(
+                    self._client.create_collection,
+                    collection_name=name,
+                    vectors_config=models.VectorParams(size=dim, distance=models.Distance.COSINE),
+                )
+            logger.info("tạo Qdrant collection %s (dim=%s, sparse=%s)", name, dim, sparse)
         except VectorStoreError:
             raise
         except Exception as exc:
@@ -115,19 +172,25 @@ class QdrantVectorStore:
         batch_size: int = 64,
         max_request_bytes: int | None = None,
     ) -> None:
-        from qdrant_client.http.models import PointStruct
+        from qdrant_client.http.models import PointStruct, SparseVector
 
         if not chunks:
             return
         limit = max_request_bytes if max_request_bytes is not None else self.max_request_bytes
-        points = [
-            PointStruct(
-                id=str(uuid.uuid5(uuid.NAMESPACE_URL, c.id)),
-                vector=c.vector,
-                payload={"chunk_id": c.id, **c.payload},
+        points = []
+        for c in chunks:
+            vector: dict = {"dense": c.vector}
+            if c.sparse:
+                vector["sparse"] = SparseVector(
+                    indices=c.sparse["indices"], values=c.sparse["values"]
+                )
+            points.append(
+                PointStruct(
+                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, c.id)),
+                    vector=vector,
+                    payload={"chunk_id": c.id, **c.payload},
+                )
             )
-            for c in chunks
-        ]
         batches = self._pack_batches(points, batch_size, limit)
         try:
             for batch in batches:
@@ -174,11 +237,52 @@ class QdrantVectorStore:
             batches.append(current)
         return batches
 
-    async def search(self, collection: str, vector: list[float], top_k: int) -> list[SearchHit]:
+    async def _is_named(self, collection: str) -> bool:
+        """Collection có named vectors (query phải dùng using='dense')?"""
+        if collection in self._named:
+            return self._named[collection]
+        info = await asyncio.to_thread(self._client.get_collection, collection)
+        vectors = info.config.params.vectors
+        named = isinstance(vectors, dict)
+        self._named[collection] = named
+        return named
+
+    async def search(
+        self, collection: str, vector: list[float], top_k: int, *, sparse: dict | None = None
+    ) -> list[SearchHit]:
+        from qdrant_client.http import models
+
+        # sparse=None: dense-only. Legacy (vector vô danh) query nguyên vị;
+        # named collection phải chọn vector "dense".
+        if sparse is None:
+            using = "dense" if await self._is_named(collection) else None
+            results = await asyncio.to_thread(
+                self._client.query_points,
+                collection_name=collection,
+                query=vector,
+                **({"using": using} if using else {}),
+                limit=top_k,
+                with_payload=True,
+            )
+            return [
+                SearchHit(id=str(p.id), score=p.score, payload=p.payload or {})
+                for p in results.points
+            ]
+        # hybrid: dense + sparse prefetch fuse RRF
         results = await asyncio.to_thread(
             self._client.query_points,
             collection_name=collection,
-            query=vector,
+            prefetch=[
+                models.Prefetch(query=vector, using="dense", limit=top_k),
+                models.Prefetch(
+                    query=models.SparseVector(
+                        indices=sparse["indices"], values=sparse["values"]
+                    ),
+                    using="sparse",
+                    limit=top_k,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=top_k,
             with_payload=True,
         )

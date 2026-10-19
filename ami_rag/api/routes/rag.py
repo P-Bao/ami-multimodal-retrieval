@@ -91,10 +91,10 @@ async def _rerank_chunks(
 ) -> tuple[list[tuple[dict, float | None]], str]:
     """Rerank candidates. Trả ([(chunk, raw_score)], fusion) với fusion đã dùng.
 
-    Fusion "rrf" (chỉ backend vllm): xin full scores (top_n = toàn bộ documents,
-    gateway chấm điểm mọi documents rồi mới cắt) rồi so hạng nội bộ 2 nhóm
-    modality (image vs phần còn lại) qua ``fuse_modality_scores`` - điểm
-    cross-encoder không so sánh được giữa image (thấp) và text (cao).
+    Fusion "rrf": xin full scores (top_n = toàn bộ documents, gateway chấm điểm
+    mọi documents rồi mới cắt) rồi so hạng nội bộ 2 nhóm modality (image vs
+    phần còn lại) qua ``fuse_modality_scores`` - điểm cross-encoder không so
+    sánh được giữa image (thấp) và text (cao).
     """
     if not chunks:
         return [], "empty"
@@ -111,8 +111,9 @@ async def _rerank_chunks(
     multimodal = getattr(settings, "RERANK_MULTIMODAL", True) and backend == "vllm"
     documents = await build_rerank_documents(chunks, asset_store, multimodal=multimodal)
     reason = "empty"
-    # Fusion rrf cần full scores (legacy BGE chỉ trả top_k -> luôn "raw")
-    fusion = backend == "vllm" and resolve_rerank_fusion(settings) == "rrf"
+    # Fusion rrf: legacy giờ trả full scores (top_n = len) nên thay vì gate
+    # theo backend vllm, chỉ cần fusion bật là xin đủ điểm rồi so hạng nội bộ.
+    fusion = resolve_rerank_fusion(settings) == "rrf"
     try:
         with observe_stage("rerank"):
             results = await rerank_func(
@@ -175,6 +176,16 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
         resolved = resolved_cache[doc_id]
         modality = chunk.get("modality") or "text"
         page = chunk.get("page")
+        artifact_urls: list[str] = []
+        if resolved is not None and asset_store is not None:
+            # Danh sách ảnh của doc (crawl 'Hình ảnh' + ảnh pdf/table) presigned;
+            # store thiếu method / lỗi mạng -> [] giữ shape key.
+            try:
+                artifact_urls = await asyncio.to_thread(
+                    asset_store.presign_doc_images, doc_id
+                )
+            except Exception:
+                artifact_urls = []
         metadata = {
             "source": chunk.get("source_path") or "",
             "page": page,
@@ -191,6 +202,7 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
                 doc=resolved,
                 modality=modality,
                 artifact_url=await _presign_asset(asset_store, chunk.get("asset_key")),
+                artifact_urls=artifact_urls,
                 table_body=chunk.get("table_body"),
                 page=page,
                 caption=chunk.get("caption"),
@@ -232,12 +244,23 @@ async def _run_search(
     started = time.perf_counter()
     candidates_wanted = top_k * max(1, settings.RETRIEVAL_OVERFETCH)
     with observe_stage("embed_query"):
-        vector = await pipeline.embedder.embed_query(query)
+        # Hybrid: embedder có embed_query_sparse -> lấy dense + sparse của query;
+        # embedder legacy (chỉ embed_query) -> dense-only (sparse=None).
+        embed_q = getattr(pipeline.embedder, "embed_query_sparse", None)
+        if embed_q is not None:
+            vector, sparse = await embed_q(query)
+        else:
+            vector = await pipeline.embedder.embed_query(query)
+            sparse = None
+        # sparse dict rỗng (0 indices) -> dense-only
+        if sparse is not None and not sparse.get("indices"):
+            sparse = None
     with observe_stage("vector_search"):
         hits = await pipeline.vector_store.search(
             pipeline.collection,
             vector,
             max(settings.RETRIEVAL_CHUNK_TOP_K, candidates_wanted),
+            sparse=sparse,
         )
     chunks = [hit.payload for hit in hits]
     CHUNKS_RETRIEVED.observe(len(chunks))
@@ -297,6 +320,7 @@ async def rag_stream(
             if doc.get("modality") is not None:
                 doc_payload["modality"] = doc["modality"]
                 doc_payload["artifact_url"] = doc.get("artifact_url")
+                doc_payload["artifact_urls"] = doc.get("artifact_urls")
             if doc.get("score") is not None:
                 doc_payload["score"] = doc["score"]
             yield f'{{"documents": [{_dumps(doc_payload)}]}}\n'

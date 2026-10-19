@@ -1,5 +1,11 @@
 """Rerank clients: legacy BGE (text-only) + vLLM Nemotron VL (multimodal).
 
+Contract server legacy (POST {base}/rerank, ví dụ :8010): Request.documents là
+list[str] Field(max_length=100) - quá 100 docs/request server trả 422/400;
+``scores`` luôn full theo len(documents) (server chấm điểm trước khi lọc),
+``ranked_indices`` chỉ mang thứ tự sau khi áp dụng top_k/min_score. Client
+legacy chia batch ≤ 100 rồi merge scores theo offset index toàn cục.
+
 - ``build_rerank_model_func``: legacy BGE reranker (POST {base}/rerank trả
   ``{scores, ranked_indices}``) - documents text-only.
 - ``build_vllm_rerank_func``: vLLM serving ``nvidia/llama-nemotron-rerank-vl-1b-v2``
@@ -26,6 +32,8 @@ logger = logging.getLogger(__name__)
 # Số request fetch ảnh đồng thời khi build documents cho rerank
 ASSET_FETCH_CONCURRENCY = 4
 
+MAX_DOCUMENTS_PER_REQ = 100  # server rerank default max_length=100 docs/request
+
 # Modalities được kèm ảnh khi rerank multimodal
 MULTIMODAL_RERANK_TYPES = ("image", "table", "equation")
 
@@ -42,26 +50,43 @@ def build_rerank_model_func(settings: Settings | None = None):
     base_url = settings.RERANK_BASE_URL.rstrip("/")
 
     async def rerank_model_func(query: str, documents: list[str], top_n: int | None = None, **_):
-        payload = {
-            "query": query,
-            "documents": documents,
-            "top_k": top_n if top_n is not None else settings.RERANK_TOP_K,
-        }
-        async with httpx.AsyncClient(timeout=settings.RERANK_TIMEOUT) as client:
-            resp = await client.post(f"{base_url}/rerank", json=payload)
-            resp.raise_for_status()
-            body = resp.json()
+        """Giữ trả [{"index": i, "relevance_score": s}] như cũ:
+        - documents ≤ MAX_DOCUMENTS_PER_REQ: 1 POST như cũ (response {scores}
+          hoặc {scores, ranked_indices}).
+        - documents > MAX: chia batch theo MAX, sequential POSTs (top_k của
+          batch = len(batch) để xin đủ điểm cho cả batch - top_k lớn hơn thì
+          server vẫn capped) rồi merge theo index offset toàn cục.
 
-        scores = body.get("scores") or []
-        indices = body.get("ranked_indices")
-        if indices is None:
-            indices = sorted(range(len(scores)), key=lambda i: -scores[i])
-        results = []
-        for i in indices:
-            idx = int(i)
-            if 0 <= idx < len(scores):
-                results.append({"index": idx, "relevance_score": float(scores[idx])})
-        return results
+        Luôn trả Scores cho TẤT CẢ documents (sorted score desc, stable) - caller
+        tự slice top_n (api/routes slice ``scored[:top_k]`` sau khi rerank).
+        ``ranked_indices`` của server chỉ top-k thì bỏ qua: đã có full scores array.
+        """
+        if not documents:
+            return []
+        all_scores = [0.0] * len(documents)
+        async with httpx.AsyncClient(timeout=settings.RERANK_TIMEOUT) as client:
+            for start in range(0, len(documents), MAX_DOCUMENTS_PER_REQ):
+                batch = documents[start:start + MAX_DOCUMENTS_PER_REQ]
+                payload = {"query": query, "documents": batch, "top_k": len(batch)}
+                resp = await client.post(f"{base_url}/rerank", json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+
+                scores = body.get("scores") or []
+                # ranked_indices (chỉ top-k sau lọc server) bỏ qua - chọn tự full scores theo offset
+                if len(scores) > len(batch):
+                    scores = scores[: len(batch)]
+                if len(scores) < len(batch):
+                    logger.warning(
+                        "rerank server trả %d/%d scores cho batch @%d",
+                        len(scores), len(batch), start,
+                    )
+                for j, s in enumerate(scores):
+                    all_scores[start + j] = float(s)
+        return [
+            {"index": idx, "relevance_score": s}
+            for idx, s in sorted(enumerate(all_scores), key=lambda t: -t[1])
+        ]
 
     return rerank_model_func
 
@@ -105,15 +130,15 @@ async def build_rerank_documents(
     chunks: list[dict],
     asset_store=None,
     *,
-    multimodal: bool = True,
+    multimodal: bool = False,
     max_input_tokens: int | None = None,
     image_token_reserve: int | None = None,
 ) -> list[str | dict]:
     """Chunk payload (Qdrant) -> documents cho rerank.
 
     - text chunk (hoặc multimodal tắt / thiếu asset store / thiếu asset_key): str.
-    - chunk image/table/equation có asset_key: fetch ảnh từ MinIO (bounded
-      concurrency, lỗi -> rơi về text) rồi trả
+    - multimodal=True (backend vllm): chunk image/table/equation có asset_key
+      fetch ảnh từ MinIO (bounded concurrency, lỗi -> rơi về text) rồi trả
       ``{"content": [text part, image_url data URI part]}``.
     - text (cả 2 dạng) vượt token budget bị head-truncate: rerank server cùng
       vLLM giới hạn max_model_len; content đầy đủ vẫn nằm ở Qdrant payload.

@@ -20,6 +20,7 @@ class RetrievedDocV2(BaseModel):
     doc: dict | None = None
     modality: str | None = None
     artifact_url: str | None = None
+    artifact_urls: list[str] = Field(default_factory=list)
     table_body: str | None = None
     page: int | None = None
     caption: str | None = None

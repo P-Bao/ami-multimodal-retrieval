@@ -26,6 +26,10 @@ def _settings(**kwargs) -> Settings:
     defaults = {
         "RERANK_BASE_URL": "http://testserver",
         "RERANK_TIMEOUT": 5,
+        # niêm phong để test không dính env/.env của Wave 1 (RERANK_MODEL=BAAI,
+        # RERANK_BACKEND=legacy) - giữ mặc định pre-Wave-1 (nemotron + auto)
+        "RERANK_MODEL": NEMOTRON,
+        "RERANK_BACKEND": "auto",
     }
     defaults.update(kwargs)
     return Settings(**defaults)
@@ -84,6 +88,8 @@ def _patch_async_client(monkeypatch, server: MockRerankServer) -> None:
 
 
 async def test_legacy_func_maps_scores_and_indices(monkeypatch):
+    # Contract mới: luôn trả full scores cho mọi documents (top_k = len(batch)),
+    # caller tự slice theo top_n - server chỉ trả ranked_indices top-k cũng vậy.
     server = MockRerankServer(mode="legacy")
     _patch_async_client(monkeypatch, server)
     func = build_rerank_model_func(_settings())
@@ -92,9 +98,114 @@ async def test_legacy_func_maps_scores_and_indices(monkeypatch):
     assert results == [
         {"index": 0, "relevance_score": 0.9},
         {"index": 1, "relevance_score": 0.5},
+        {"index": 2, "relevance_score": 0.1},
     ]
-    assert server.requests[0]["top_k"] == 2
+    assert server.requests[0]["top_k"] == 3
     assert server.requests[0]["documents"] == ["a", "b", "c"]
+
+
+class _BatchLegacyServer:
+    """Legacy server giả: scores = hàm deterministic theo index trong content 'd<i>';
+    đúng form server thật ({scores, ranked_indices}, top_k capped)."""
+
+    def __init__(self):
+        self.requests: list[dict] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        self.requests.append(body)
+        docs = body["documents"]
+        ranked = sorted(range(len(docs)), key=lambda j: -_mock_score(int(docs[j][1:])))
+        ranked = ranked[: body.get("top_k") or len(docs)]
+        return httpx.Response(
+            200,
+            json={
+                "scores": [_mock_score(int(d[1:])) for d in docs],
+                "ranked_indices": ranked,
+            },
+        )
+
+
+def _mock_score(global_index: int) -> float:
+    """Permutation cứng - thứ tự desc toàn cục đan xen 2 batch."""
+    return ((global_index * 44) % 105) / 105.0
+
+
+async def test_legacy_batches_over_100_docs_and_merges(monkeypatch):
+    server = _BatchLegacyServer()
+    _patch_async_client(monkeypatch, server)
+    func = build_rerank_model_func(_settings())
+
+    docs = [f"d{i}" for i in range(105)]
+    results = await func("q", docs, top_n=200)
+
+    # 105 docs -> 2 POST (100 + 5), top_k của từng batch = len(batch)
+    assert len(server.requests) == 2
+    assert len(server.requests[0]["documents"]) == 100
+    assert server.requests[0]["top_k"] == 100
+    assert len(server.requests[1]["documents"]) == 5
+    assert server.requests[1]["top_k"] == 5
+
+    indexes = [r["index"] for r in results]
+    # đủ 105 index, không trùng lặp, scores khớp
+    assert sorted(indexes) == list(range(105))
+    assert all(r["relevance_score"] == _mock_score(r["index"]) for r in results)
+    # thứ tự overall theo score desc toàn cục (đan xen 2 batch, không theo block)
+    assert indexes == sorted(range(105), key=lambda i: -_mock_score(i))
+
+
+def _static_server(response_json: dict):
+    class _S:
+        def __init__(self):
+            self.requests: list[dict] = []
+
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            self.requests.append(json.loads(request.content.decode()))
+            return httpx.Response(200, json=response_json)
+
+    return _S()
+
+
+async def test_legacy_scores_only_response_builds_ranking(monkeypatch):
+    # response chỉ {scores} -> client tự build indices theo score desc
+    server = _static_server({"scores": [0.1, 0.9, 0.5]})
+    _patch_async_client(monkeypatch, server)
+    func = build_rerank_model_func(_settings())
+
+    results = await func("q", ["a", "b", "c"])
+    assert results == [
+        {"index": 1, "relevance_score": 0.9},
+        {"index": 2, "relevance_score": 0.5},
+        {"index": 0, "relevance_score": 0.1},
+    ]
+
+
+async def test_legacy_truncated_ranked_indices_still_full(monkeypatch):
+    # {scores, ranked_indices} với indices bị server cắt theo top_k
+    # -> client vẫn trả full results (theo scores array đầy đủ)
+    server = _static_server({"scores": [0.2, 0.8, 0.5, 0.1], "ranked_indices": [1, 2]})
+    _patch_async_client(monkeypatch, server)
+    func = build_rerank_model_func(_settings())
+
+    results = await func("q", ["a", "b", "c", "d"])
+    assert results == [
+        {"index": 1, "relevance_score": 0.8},
+        {"index": 2, "relevance_score": 0.5},
+        {"index": 0, "relevance_score": 0.2},
+        {"index": 3, "relevance_score": 0.1},
+    ]
+
+
+async def test_legacy_100_docs_single_post(monkeypatch):
+    server = _BatchLegacyServer()
+    _patch_async_client(monkeypatch, server)
+    func = build_rerank_model_func(_settings())
+
+    docs = [f"d{i}" for i in range(100)]
+    results = await func("q", docs, top_n=100)
+    assert len(server.requests) == 1
+    assert server.requests[0]["top_k"] == 100
+    assert [r["index"] for r in results] == sorted(range(100), key=lambda i: -_mock_score(i))
 
 
 async def test_vllm_func_maps_results(monkeypatch):
@@ -155,6 +266,15 @@ async def test_build_rerank_documents_text_only():
     ]
     docs = await build_rerank_documents(chunks, None, multimodal=True)
     assert docs == ["chunk 1", "chunk 2"]
+
+
+async def test_build_rerank_documents_default_text_only():
+    # mặc định multimodal=False (khớp RERANK_MULTIMODAL=False legacy BGE)
+    store = FakeAssetStore()
+    chunks = [{"content": "img", "modality": "image", "asset_key": "ok"}]
+    docs = await build_rerank_documents(chunks, store)
+    assert docs == ["img"]
+    assert store.fetched == []
 
 
 async def test_build_rerank_documents_multimodal_with_assets():

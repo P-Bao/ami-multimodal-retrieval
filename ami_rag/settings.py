@@ -41,29 +41,32 @@ class Settings(BaseSettings):
     CAPTION_LLM_LANGUAGE: str = "vi"
 
     # --- Remote embedding server (máy B) ---
+    # backend "bge": embedding-server BAAI/bge-m3 (:8008) — dense 1024 + sparse;
     # backend "custom": qwen-embedding-server (/info + /embed);
     # backend "openai": gateway nemotron-vl-vllm (máy B) — /health + /v1/embeddings
     # với {"input", "input_type"} cho nvidia/llama-nemotron-embed-vl-1b-v2.
-    EMBED_SERVER_URL: str = "http://localhost:8080"
+    EMBED_SERVER_URL: str = "http://localhost:8008"
     # Chỉ từ env - không ghi token vào file config/commit
     EMBED_SERVER_TOKEN: str = ""
-    EMBED_MODEL: str = "nvidia/llama-nemotron-embed-vl-1b-v2"
-    # auto | custom | openai (auto: prefix "Qwen/" -> custom, còn lại -> openai)
-    EMBED_BACKEND: str = "auto"
+    EMBED_MODEL: str = "BAAI/bge-m3"
+    # auto | custom | openai | bge (auto: model chứa "bge" -> bge, prefix "Qwen/" -> custom, còn lại -> openai)
+    EMBED_BACKEND: str = "bge"
     # Dùng để xác minh với server lúc handshake (dim thực tế do server quyết định)
-    EMBED_DIM: int = 2048
+    EMBED_DIM: int = 1024
     EMBED_TIMEOUT: int = 60
-    EMBED_BATCH_SIZE: int = 32
+    EMBED_BATCH_SIZE: int = 32          # server giới hạn tối đa 64 text/request
     EMBED_MAX_CONCURRENCY: int = 4
     EMBED_RETRIES: int = 3
     EMBED_CACHE_ENABLED: bool = True
     EMBED_CACHE_PATH: str = "./embed_cache.db"
     # Guard kích thước input embed (client-side): item vượt budget bị head-truncate
-    # trước khi gửi (content đầy đủ vẫn lưu Qdrant). Default tính cho max_model_len
-    # 8192 của gateway - server phải chạy 8192, còn không thì giảm qua env.
-    EMBED_MAX_INPUT_TOKENS: int = 6000
-    # Một ảnh Nemotron VL tốn tối đa ~1792 visual token (6 tile + thumbnail - model card)
-    EMBED_IMAGE_TOKEN_RESERVE: int = 1792
+    # trước khi gửi (content đầy đủ vẫn lưu Qdrant). Default tính cho max seq 8192
+    # của BGE-M3 - server phải chạy 8192, còn không thì giảm qua env.
+    EMBED_MAX_INPUT_TOKENS: int = 8192
+    # BGE-M3 text-only không xử lý ảnh -> không cần trừ budget token ảnh
+    EMBED_IMAGE_TOKEN_RESERVE: int = 0
+    # BGE-M3 trả thêm vector sparse (lexical weights) kèm dense
+    EMBED_RETURN_SPARSE: bool = True
 
     MONGO_URI: str = "mongodb://localhost:27017/?directConnection=true"
     # Shares organization_db with the backend; every RAG collection is prefixed `multimodal_`
@@ -146,14 +149,15 @@ class Settings(BaseSettings):
     # doc `processing` quá lâu (tiến trình chết giữa chừng) được `status` báo là treo
     CLI_STUCK_PROCESSING_MINUTES: int = 60
 
-    RERANK_BASE_URL: str = "http://localhost:8080"
-    # Gateway nemotron-vl-vllm (máy B) phục vụ cả embed + rerank; vLLM serving
-    # nvidia/llama-nemotron-rerank-vl-1b-v2 phía sau gateway.
-    RERANK_MODEL: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
+    RERANK_BASE_URL: str = "http://localhost:8010"
+    # legacy: BGE reranker text-only (:8010, BAAI/bge-reranker-v2-m3); vllm: gateway
+    # nemotron-vl-vllm (máy B) serving nvidia/llama-nemotron-rerank-vl-1b-v2.
+    RERANK_MODEL: str = "BAAI/bge-reranker-v2-m3"
     # auto | legacy | vllm (auto: model rỗng hoặc chứa "bge" -> legacy BGE, còn lại -> vllm)
-    RERANK_BACKEND: str = "auto"
-    # vLLM rerank kèm ảnh + text cho chunk image/table/equation (cần asset_key)
-    RERANK_MULTIMODAL: bool = True
+    RERANK_BACKEND: str = "legacy"
+    # vLLM rerank kèm ảnh + text cho chunk image/table/equation (cần asset_key);
+    # legacy BGE text-only -> luôn tắt
+    RERANK_MULTIMODAL: bool = False
     RERANK_TOP_K: int = 5
     RERANK_TIMEOUT: int = 60
     # Guard kích thước text gửi lên rerank server (cùng vLLM 8192): document vượt
@@ -190,18 +194,21 @@ class Settings(BaseSettings):
 def resolve_embed_backend(settings) -> str:
     """Resolve EMBED_BACKEND: explicit value, else auto-infer từ EMBED_MODEL.
 
-    - EMBED_BACKEND đặt rõ -> dùng luôn (custom | openai).
-    - auto: model prefix "Qwen/" -> "custom" (qwen-embedding-server contract),
+    - EMBED_BACKEND đặt rõ -> dùng luôn (custom | openai | bge).
+    - auto: model chứa "bge" -> "bge" (embedding-server BGE-M3 :8008),
+      prefix "Qwen/" -> "custom" (qwen-embedding-server contract),
       còn lại -> "openai" (vLLM OpenAI-compatible, Nemotron VL embed).
     """
     backend = (getattr(settings, "EMBED_BACKEND", "auto") or "auto").lower()
     if backend != "auto":
-        if backend not in ("custom", "openai"):
+        if backend not in ("custom", "openai", "bge"):
             raise ValueError(
-                f"EMBED_BACKEND không hợp lệ: {backend} (custom | openai | auto)"
+                f"EMBED_BACKEND không hợp lệ: {backend} (custom | openai | bge | auto)"
             )
         return backend
     model = getattr(settings, "EMBED_MODEL", "")
+    if "bge" in model.lower():
+        return "bge"
     return "custom" if model.startswith("Qwen/") else "openai"
 
 

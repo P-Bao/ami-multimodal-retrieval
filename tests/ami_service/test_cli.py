@@ -164,6 +164,12 @@ class _Args:
         self.qdrant_only = False
         self.stale_models = False
         self.purge_cache_model = []
+        # Throttle: dùng 0 (tắt nghỉ) chứ không mirror parser default (0.2/2.0)
+        # để test có sẵn không chết vì chờ sleep thật.
+        self.limit = 0
+        self.sleep = 0.0
+        self.batch = 20
+        self.batch_sleep = 0.0
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -543,6 +549,100 @@ async def test_reindex_scan_does_not_select_indexed_or_failed():
     assert rc == 0
     # chỉ doc-3 (legacy stale); indexed + failed không reindex
     assert [doc_id for doc_id, _, _ in runner.runs] == ["doc-3"]
+
+
+# --------------------------------------------------------------------------
+# reindex --limit / --sleep / --batch / --batch-sleep (throttling)
+# --------------------------------------------------------------------------
+def _seed_n(store: DocStatusStore, n: int):
+    for i in range(n):
+        store._col.insert(f"doc-{i}", {"status": LEGACY_PROCESSED, "source_path": f"old{i}.pdf"})
+
+
+async def test_reindex_limit_runs_only_first_n_docs(capsys):
+    settings = _make_settings()
+    store = _make_store()
+    _seed_n(store, 5)
+    runner = FakeRunner()
+    rc = await cmd_reindex(
+        _Args(all=True, limit=2, batch=0),
+        settings=settings, store=store, runner=runner,
+    )
+    assert rc == 0
+    assert [doc_id for doc_id, _, _ in runner.runs] == ["doc-0", "doc-1"]
+
+
+async def test_reindex_limit_applied_before_dry_run(capsys):
+    settings = _make_settings()
+    store = _make_store()
+    _seed_n(store, 5)
+    runner = FakeRunner(chunks=7, cache_hits=2)
+    await cmd_reindex(
+        _Args(all=True, limit=2, dry_run=True, batch=0),
+        settings=settings, store=store, runner=runner,
+    )
+    out = capsys.readouterr().out
+    assert "2 doc" in out
+    assert [doc_id for doc_id, _, dry_run in runner.runs] == ["doc-0", "doc-1"]
+    assert all(dry_run for _, _, dry_run in runner.runs)
+
+
+async def test_reindex_sleep_between_docs_not_before_first(monkeypatch):
+    settings = _make_settings()
+    store = _make_store()
+    _seed_n(store, 3)
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    runner = FakeRunner()
+    await cmd_reindex(
+        _Args(all=True, sleep=0.5, batch=0, batch_sleep=0.0),
+        settings=settings, store=store, runner=runner,
+    )
+    # 3 doc -> 2 lần ngủ giữa, không ngủ trước doc đầu
+    assert sleeps == [0.5, 0.5]
+
+
+async def test_reindex_batch_sleep_starts_new_batch(monkeypatch):
+    settings = _make_settings()
+    store = _make_store()
+    _seed_n(store, 5)  # lô 1: doc-0..1, lô 2: doc-2..3, lô 3: doc-4
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    runner = FakeRunner()
+    await cmd_reindex(
+        _Args(all=True, sleep=0.0, batch=2, batch_sleep=1.0),
+        settings=settings, store=store, runner=runner,
+    )
+    assert sleeps == [0.0, 1.0, 0.0, 1.0]
+    assert len(runner.runs) == 5
+
+
+def test_reindex_parser_defaults(monkeypatch):
+    import sys
+
+    from ami_rag import cli
+
+    captured = {}
+
+    async def fake_cmd_reindex(args):
+        captured["args"] = args
+
+    monkeypatch.setattr(cli, "cmd_reindex", fake_cmd_reindex)
+    monkeypatch.setattr(sys, "argv", ["ami-rag", "reindex"])
+    cli.main()
+    args = captured["args"]
+    assert args.limit == 0
+    assert args.sleep == 0.2
+    assert args.batch == 20
+    assert args.batch_sleep == 2.0
 
 
 # --------------------------------------------------------------------------

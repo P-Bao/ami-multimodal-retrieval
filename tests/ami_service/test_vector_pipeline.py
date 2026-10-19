@@ -507,11 +507,9 @@ async def test_full_run_crawl_doc_indexes_images(
     assert all(p["asset_key"] for p in image_payloads)
     # URL ảnh không lọt vào text chunk
     assert all("NL_04608" not in p["content"] for p in payloads)
-    # embed: chunk image có ảnh base64 (asset lấy từ MinIO)
+    # embed caption-only (BGE-M3): không item dict image_b64 nữa
     last_batch = fake_embedder.embedded_texts[-1]
-    image_items = [it for it in last_batch if isinstance(it, dict) and "image_b64" in it]
-    assert len(image_items) == 2
-    assert image_items[0]["image_b64"] == base64.b64encode(b"\x89PNG-fake-bytes").decode()
+    assert all(isinstance(it, str) for it in last_batch)
     # describe đã chạy cho ảnh crawl (descriptions.json có item image)
     desc_key = ArtifactPaths.descriptions_key(fake_asset_store, CRAWL_ID)
     descriptions = fake_asset_store.json_objects.get(desc_key)
@@ -745,17 +743,19 @@ async def test_stage_parse_backend_data_failure_falls_back_to_mineru(
     assert any(i["type"] == "table" for i in saved)
 
 
-async def test_prepare_embed_items_attaches_image_b64(pipeline, fake_embedder):
+async def test_prepare_embed_items_caption_only(pipeline, fake_embedder):
     outcome = await pipeline.run(PDF_ID)
     assert outcome.ok
-    # Last call to embedder should contain image item with image_b64
+    # Caption-only: BGE-M3 không nhận ảnh — kể cả chunk image/table/equation
+    # có asset_key, item embed vẫn luôn là str (c.content), không dict image_b64.
     last_batch = fake_embedder.embedded_texts[-1]
-    image_items = [it for it in last_batch if isinstance(it, dict) and "image_b64" in it]
-    assert len(image_items) >= 1
-    assert image_items[0]["image_b64"]
+    assert last_batch
+    assert all(isinstance(it, str) for it in last_batch)
 
 
-async def test_prepare_embed_items_attaches_assets_for_table_and_equation(pipeline):
+async def test_prepare_embed_items_caption_only_keeps_modal_content(
+    pipeline, fake_vector_store, fake_asset_store, fake_status_store, fake_embedder
+):
     from ami_rag.core.vector_pipeline import Chunk
 
     chunks = [
@@ -785,16 +785,85 @@ async def test_prepare_embed_items_attaches_assets_for_table_and_equation(pipeli
         ),
     ]
     items = await pipeline._prepare_embed_items(chunks)
-    assert items[0] == "text"
-    # table có asset -> image + text (modality Image+Text)
-    assert isinstance(items[1], dict)
-    assert items[1]["text"] == "[Table Content]"
-    assert items[1]["image_b64"]
-    # equation có asset -> image + text
-    assert isinstance(items[2], dict)
-    assert items[2]["image_b64"]
-    # table không có asset_key -> text-only
-    assert items[3] == "table no asset"
+    # mọi chunk đều là str caption, đúng thứ tự
+    assert items == ["text", "[Table Content]", "[Equation]", "table no asset"]
+
+
+async def test_stage_embed_upserts_sparse(
+    pipeline, fake_status_store, fake_vector_store
+):
+    seen: list = []
+    original_upsert = fake_vector_store.upsert
+
+    async def _spy(collection, records):
+        seen.extend(records)
+        return await original_upsert(collection, records)
+
+    fake_vector_store.upsert = _spy
+    outcome = await pipeline.run(PDF_ID)
+
+    assert outcome.ok and outcome.stage == "indexed"
+    assert len(seen) == fake_status_store.get(PDF_ID)["chunk_count"]
+    for r in seen:
+        assert r.sparse is not None
+        assert r.sparse == FakeEmbedder._sparse_from_text(r.payload["content"])
+        assert r.sparse["values"] == [0.5] * len(r.sparse["indices"])
+
+
+async def test_stage_embed_sparse_empty_dict_to_none(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+):
+    """Embedder legacy (không có embed_documents_sparse) -> record.sparse luôn None."""
+
+    class _LegacyEmbedder:
+        def __init__(self, dim=8):
+            self.dim = dim
+
+        async def verify(self):
+            return {"model_name": "legacy", "dim": self.dim}
+
+        async def embed_documents(self, texts):
+            return [[0.1] * self.dim for _ in texts]
+
+        async def embed_query(self, text):
+            return [0.2] * self.dim
+
+        def count_cache_hits(self, texts):
+            return 0
+
+        async def close(self):
+            pass
+
+    settings = Settings(
+        _env_file=None,
+        WORKSPACE="test",
+        EMBED_MODEL="Qwen/Qwen3-VL-Embedding-2B",
+        EMBED_DIM=8,
+        CHUNKER_VERSION="v1",
+        PARSER="mineru",
+    )
+    pipeline = VectorPipeline(
+        settings,
+        embedder=_LegacyEmbedder(),
+        vector_store=fake_vector_store,
+        asset_store=fake_asset_store,
+        store=fake_status_store,
+        docs_repo=fake_docs_repo,
+        parser=FakeParser(),
+    )
+    seen: list = []
+    original_upsert = fake_vector_store.upsert
+
+    async def _spy(collection, records):
+        seen.extend(records)
+        return await original_upsert(collection, records)
+
+    fake_vector_store.upsert = _spy
+    outcome = await pipeline.run(PDF_ID)
+
+    assert outcome.ok and outcome.stage == "indexed"
+    assert len(seen) == fake_status_store.get(PDF_ID)["chunk_count"]
+    assert all(r.sparse is None for r in seen)
 
 
 # ----------------------------------------------------------------------
