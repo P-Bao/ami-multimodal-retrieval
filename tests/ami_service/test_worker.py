@@ -164,9 +164,9 @@ async def test_pdf_without_file_path_fails_after_max_delivery(
     await worker._process_message("1-1", event)
     assert "1-1" not in fake_queue.acked
     await worker._process_message("1-1", event)
-
     row = fake_status_store.get(PDF_ID)
     assert row["status"] == "failed"
+    assert row["attempts"] == 2  # 1 lần +1 mỗi delivery, không đếm đôi
     assert "file_path" in row["error"]
     assert "1-1" in fake_queue.acked
 
@@ -188,6 +188,7 @@ async def test_failure_marks_failed_and_retries_until_max_delivery(
     await worker._process_message("1-1", event)
     assert "1-1" in fake_queue.acked
     assert fake_status_store.get(TEXT_ID)["status"] == "failed"
+    assert fake_status_store.get(TEXT_ID)["attempts"] == 2
 
 
 async def test_skipped_event_releases_attempt(

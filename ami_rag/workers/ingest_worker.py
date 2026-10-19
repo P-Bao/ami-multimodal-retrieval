@@ -147,12 +147,16 @@ class IngestWorker:
                     exc,
                 )
                 if not ran:
+                    # begin_attempt đã +1 attempts ở đầu delivery; mark_failed
+                    # chỉ ghi trạng thái (tăng nữa là đếm đôi, cắt ngắn budget
+                    # WORKER_MAX_DELIVERY / --max-attempts của CLI retry).
                     await asyncio.to_thread(
                         partial(
                             self.state_repo.mark_failed,
                             event.document_id,
                             str(exc),
                             "ingest",
+                            increment_attempt=False,
                         )
                     )
                 if attempts >= self.settings.WORKER_MAX_DELIVERY:
