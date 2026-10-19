@@ -140,6 +140,27 @@ async def test_document_id_resolved_from_chunk_payload(client):
     )
 
 
+async def test_resolve_doc_id_presigns_fresh_per_call(fake_docs_repo):
+    """Cache giữ field Mongo; file_url presign lại mỗi call (URL hết hạn không được trả lại)."""
+    resolver = DocResolver(
+        docs_repo=fake_docs_repo,
+        minio_endpoint="localhost:9000",
+        minio_access_key="x",
+        minio_secret_key="x",
+        minio_bucket="ami-data-documents",
+    )
+    signs = iter(["url-1", "url-2"])
+    resolver._presign = lambda object_name: next(signs)
+    doc_id = "64b000000000000000000001"
+
+    first = await resolver.resolve_doc_id(doc_id)
+    second = await resolver.resolve_doc_id(doc_id)
+
+    assert first["file_url"] == "url-1"
+    assert second["file_url"] == "url-2"
+    assert first["document_id"] == second["document_id"]
+
+
 async def test_references_dedup_by_document(client):
     resp = await client.post("/v2/rag/", json=BODY)
     references = resp.json()["references"]
