@@ -170,6 +170,7 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
     """Build v2 documents: resolve mỗi chunk qua doc_id (payload mang doc_id trực tiếp)."""
     documents = []
     resolved_cache: dict[str, dict | None] = {}
+    urls_cache: dict[str, list[str]] = {}
     for chunk, score in scored:
         doc_id = chunk.get("doc_id") or ""
         if doc_id not in resolved_cache:
@@ -182,14 +183,16 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
         page = chunk.get("page")
         artifact_urls: list[str] = []
         if resolved is not None and asset_store is not None:
-            # Danh sách ảnh của doc (crawl 'Hình ảnh' + ảnh pdf/table) presigned;
-            # store thiếu method / lỗi mạng -> [] giữ shape key.
-            try:
-                artifact_urls = await asyncio.to_thread(
-                    asset_store.presign_doc_images, doc_id
-                )
-            except Exception:
-                artifact_urls = []
+            # 1 lần list MinIO per doc_id mỗi request (trước đây N chunk cùng
+            # doc list N lần); cache per-request nên URL luôn mới.
+            if doc_id not in urls_cache:
+                try:
+                    urls_cache[doc_id] = await asyncio.to_thread(
+                        asset_store.presign_doc_images, doc_id
+                    )
+                except Exception:
+                    urls_cache[doc_id] = []
+            artifact_urls = urls_cache[doc_id]
         ARTIFACT_URLS_RETURNED_TOTAL.inc(len(artifact_urls))
         metadata = {
             "source": chunk.get("source_path") or "",

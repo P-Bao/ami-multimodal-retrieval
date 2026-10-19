@@ -310,10 +310,15 @@ async def test_presign_failure_gives_null_artifact_url(client, fake_asset_store)
 class _ImageAssetStore(FakeAssetStore):
     """Thêm list_doc_images/presign_doc_images theo contract MinioAssetStore."""
 
+    def __init__(self):
+        super().__init__()
+        self.presign_doc_calls: list[str] = []
+
     def list_doc_images(self, doc_id):
         return [f"rag-assets/{doc_id}/img1.png"]
 
     def presign_doc_images(self, doc_id):
+        self.presign_doc_calls.append(doc_id)
         return [f"https://minio/presigned/rag-assets/{doc_id}/img1.png"]
 
 
@@ -356,6 +361,16 @@ async def test_artifact_urls_presigned_doc_images(client, app):
     # chunk có asset_key (ảnh pdf) vẫn giữ artifact_url riêng, trùng URL doc
     image_doc = next(d for d in docs if d["modality"] == "image")
     assert image_doc["artifact_url"] == image_doc["artifact_urls"][0]
+
+
+async def test_artifact_urls_presigned_once_per_doc(client, app):
+    """N chunk cùng doc -> presign_doc_images chạy 1 lần, không N lần list MinIO."""
+    store = _ImageAssetStore()
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: store
+    docs = (await client.post("/v2/rag/", json={**BODY, "top_k": 10})).json()["documents"]
+    same_doc = [d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000001"]
+    assert len(same_doc) >= 2
+    assert store.presign_doc_calls.count("64b000000000000000000001") == 1
 
 
 async def test_artifact_urls_empty_for_unresolved_doc(client, app, fake_vector_store):
