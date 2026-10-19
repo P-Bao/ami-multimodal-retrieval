@@ -1,6 +1,6 @@
 # Monitoring — Multimodal RAG (API + ingest worker)
 
-Layout (không có Prometheus/Grafana container — dùng kube-prometheus-stack + Grafana trung tâm trong cluster). Mọi lệnh `make` chạy ở gốc repo RAG-Anything:
+Layout (không có Prometheus/Grafana container — dùng kube-prometheus-stack + Grafana trung tâm trong cluster). Mọi lệnh `make` chạy ở gốc repo `ami-multimodal-retrieval` (thư mục chứa `Makefile`):
 
 ```
 monitoring/
@@ -28,16 +28,16 @@ Khi API chạy worker nhúng (`WORKER_ENABLED=true`) thì metric ingest nằm ch
    `helm/dashboard-configmap.generated.yaml` là file sinh ra, không sửa tay.
    Label `release: kube-prometheus-stack` phải khớp selector của Prometheus
    (`kubectl get prometheus -A -o jsonpath='{.items[*].spec.ruleSelector}'`).
-4. Tracing (tuỳ chọn): đặt `OTEL_EXPORTER_OTLP_ENDPOINT` (vd `http://host.docker.internal:32706`, NodePort OTLP/HTTP của `tempo-multimodal-rag`) trong `.env`; compose nạp `.env` vào container. Chỉ API (`/v2/rag`, span `rag.retrieval` kèm input/output) gửi trace; worker không trace (compose để trống `OTEL_EXPORTER_OTLP_ENDPOINT`), ingest chỉ có metric Prometheus.
+4. Tracing (tuỳ chọn): đặt `OTEL_EXPORTER_OTLP_ENDPOINT` (vd `http://host.docker.internal:4318`, OTLP/HTTP của `tempo-multimodal-rag`) trong `.env`; compose nạp `.env` vào container. Chỉ API (`/v2/rag`, span `rag.retrieval` kèm input/output) gửi trace; worker không trace (compose để trống `OTEL_EXPORTER_OTLP_ENDPOINT`), ingest chỉ có metric Prometheus.
 
 ## Dashboard
 
 Timezone cố định `Asia/Ho_Chi_Minh` — khớp label `day`/`hod` trong code; không đổi sang `browser`.
-Rows: Tổng quan · Requests theo ngày/giờ · Latency & Errors · Pipeline stages · Docs & Chunks · Danh sách trace · **Multimodal retrieval** (docs theo modality, presign failures) · **Ingest pipeline** (stream pending/lag, ingest in-flight, events theo kết quả, duration P50/P95, stage time, documents theo status, parse failures, items theo modality, crawl image failures).
+Rows: Tổng quan · Requests theo ngày/giờ · Latency & Errors · Pipeline stages · Docs & Chunks · Danh sách trace · **Multimodal retrieval** (docs theo modality, presign failures, search mode dense/hybrid, artifact URLs trả về, query embed failures theo reason) · **Ingest pipeline** (stream pending/lag, ingest in-flight, events theo kết quả, duration P50/P95, stage time, documents theo status, parse failures, items theo modality, crawl image failures, ingest embed failures theo reason, embed cache hit rate).
 
 Yêu cầu:
 - Prometheus datasource uid `prometheus`.
-- Tempo datasource uid `multimodal_rag_log` (panel Recent traces). Tempo riêng cho service này: release `tempo-multimodal-rag` (`monitoring/helm/tempo-multimodal-rag-values.yaml`), datasource nạp qua sidecar bằng `monitoring/helm/grafana-datasource-tempo-multimodal-rag.yaml`. URL Grafana: `http://tempo-multimodal-rag.monitoring.svc.cluster.local:3200`; app ghi trace tới OTLP/HTTP NodePort 32706 (`OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:32706`; xem lại bằng `kubectl get svc tempo-multimodal-rag -n monitoring`).
+- Tempo datasource uid `multimodal_rag_log` (panel Recent traces). Tempo riêng cho service này: release `tempo-multimodal-rag` (`monitoring/helm/tempo-multimodal-rag-values.yaml`), datasource nạp qua sidecar bằng `monitoring/helm/grafana-datasource-tempo-multimodal-rag.yaml`. URL Grafana: `http://tempo-multimodal-rag.monitoring.svc.cluster.local:3200`; app ghi trace tới OTLP/HTTP port 4318 (`OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318`; NodePort cụ thể xem bằng `kubectl get svc tempo-multimodal-rag -n monitoring`).
 - Plugin `volkovlabs-echarts-panel` (panel Requests theo ngày/giờ).
 
 Mỗi lần đổi metric trong `ami_rag/observability.py` cần cập nhật dashboard;
@@ -57,8 +57,11 @@ Mỗi lần đổi metric trong `ami_rag/observability.py` cần cập nhật da
 | `multimodal_rag_ingest_pages_total` | Counter | |
 | `multimodal_rag_ingest_stream_pending` / `_stream_lag` | Gauge | |
 | `multimodal_rag_ingest_documents` | Gauge | `status` |
+| `multimodal_rag_ingest_embed_failures_total` | Counter | `reason` (unreachable/auth/input_too_long/oom/model_mismatch/circuit_open/other) |
+| `multimodal_rag_ingest_embed_items_total` | Counter | (mẫu số của cache hit rate) |
+| `multimodal_rag_ingest_embed_cache_hits_total` | Counter | (tử số của cache hit rate) |
 
-Metric API mới so với bản cũ: `multimodal_rag_retrieval_docs_by_modality_total{modality}`, `_presign_failures_total`, `_chunks_retrieved`, `_rerank_fallback_total{reason}`. Danh sách đầy đủ: `docs/ami_service.md` mục 9.
+Metric API mới so với bản cũ: `multimodal_rag_retrieval_docs_by_modality_total{modality}`, `_presign_failures_total`, `_chunks_retrieved`, `_rerank_fallback_total{reason}`, `_search_mode_total{mode}` (dense|hybrid — tỉ lệ hybrid vs dense), `_artifact_urls_returned_total`, `_embed_failures_total{reason}`. Danh sách đầy đủ: `docs/ami_service.md` mục 9.
 
 ## Alert (`helm/prometheusrule.yaml`)
 
@@ -69,10 +72,12 @@ Metric API mới so với bản cũ: `multimodal_rag_retrieval_docs_by_modality_
 | `RagIngestParseFailures` | > 3 parse lỗi / 30 phút | warning |
 | `RagCrawlImageFailures` | > 20 URL ảnh crawl lỗi / 30 phút | warning |
 | `RagIngestWorkerDown` | target `worker-metrics` không UP 5 phút | critical |
+| `RagIngestEmbedFailures` | có lỗi embed ở ingest (rate > 0 / 5 phút) | warning |
 | `RagRetrievalErrorRate` | error ratio > 5% trong 10 phút | warning |
 | `RagRerankFallback` | fallback > 20% trong 10 phút | warning |
 | `RagPresignFailures` | > 10 lỗi presign / 15 phút | warning |
 | `RagMetricsDown` | target `metrics` không UP 5 phút | critical |
+| `RagEmbedFailures` | có lỗi embed ở retrieval (rate > 0 / 5 phút) | warning |
 
 ## Lưu ý
 

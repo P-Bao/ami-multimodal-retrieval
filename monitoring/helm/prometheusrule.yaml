@@ -49,6 +49,13 @@ spec:
           annotations:
             summary: "Ingest worker khong con duoc scrape"
             description: "Target worker-metrics (:9109) khong UP > 5 phut."
+        - alert: RagIngestEmbedFailures
+          expr: sum(rate(multimodal_rag_ingest_embed_failures_total[5m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Embed loi khi ingest"
+            description: "{{ $value }} lan/s embed loi trong 5 phut. Kiem tra embedding-server :8008 (BGE_API_KEY, GPU) va log ami-rag-worker."
     - name: multimodal-rag-retrieval
       rules:
         - alert: RagRetrievalErrorRate
@@ -86,3 +93,10 @@ spec:
           annotations:
             summary: "API /metrics khong con duoc scrape"
             description: "Target metrics (:8009) khong UP > 5 phut."
+        - alert: RagEmbedFailures
+          expr: sum(rate(multimodal_rag_retrieval_embed_failures_total[5m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Embed query that bai khi retrieval"
+            description: "{{ $value }} lan/s embed query loi trong 5 phut - request /v2/rag tra loi. Kiem tra embedding-server :8008 (BGE_API_KEY, GPU, model/dim)."

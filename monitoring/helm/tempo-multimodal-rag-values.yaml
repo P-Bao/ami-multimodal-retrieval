@@ -6,7 +6,7 @@
 #     -n monitoring -f monitoring/helm/tempo-multimodal-rag-values.yaml
 #
 # Grafana URL (in-cluster HTTP API):  http://tempo-multimodal-rag.monitoring.svc.cluster.local:3200
-# App ghi trace (OTLP/HTTP, NodePort 4318 của service) -> xem NodePort bằng:
+# App ghi trace (OTLP/HTTP) tới NodePort trỏ service port 4318 -> xem NodePort bang:
 #   kubectl get svc tempo-multimodal-rag -n monitoring
 nameOverride: tempo-multimodal-rag
 fullnameOverride: tempo-multimodal-rag

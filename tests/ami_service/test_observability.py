@@ -8,6 +8,7 @@ from ami_rag import observability as obs
 from ami_rag.api.routes import rag as rag_routes
 
 from .test_api import app, client  # noqa: F401  (fixtures)
+from .test_vector_pipeline import pipeline  # noqa: F401  (fixture: pipeline w/ parser)
 
 P = "multimodal_rag_retrieval_"
 BODY = {"messages": [{"role": "user", "content": "học phí"}]}
@@ -57,19 +58,74 @@ async def test_rerank_fallback_on_error(client, app):  # noqa: F811
 
 
 async def test_exception_counts_error_and_releases_in_flight(client, app):  # noqa: F811
-    pipeline = app.dependency_overrides[rag_routes.get_pipeline]()
+    pipeline = app.dependency_overrides[rag_routes.get_pipeline]()  # noqa: F811
     pipeline.__dict__["embedder"] = _BoomEmbedder()
 
     before = _val("errors_total", mode="vector")
+    before_embed = _val("embed_failures_total", reason="other")
     with pytest.raises(RuntimeError):
         await client.post("/v2/rag/", json=BODY)
     assert _val("errors_total", mode="vector") == before + 1
+    # RuntimeError không phải EmbedderError -> rơi vào reason "other" (tập đóng)
+    assert _val("embed_failures_total", reason="other") == before_embed + 1
     assert _val("requests_in_flight") == 0
 
 
 class _BoomEmbedder:
     async def embed_query(self, query):
         raise RuntimeError("embed server down")
+
+
+class _UnreachableEmbedder:
+    """Dense-only embedder, embed loi theo EmbedderError để test label reason."""
+
+    dim = 8
+
+    async def embed_query(self, query):
+        from ami_rag.core.embedder import EmbedServerUnreachable
+
+        raise EmbedServerUnreachable("embed server down")
+
+
+async def test_retrieval_embed_failure_reason_from_embedder_error(client, app):  # noqa: F811
+    from ami_rag.core.embedder import EmbedServerUnreachable
+
+    pipeline = app.dependency_overrides[rag_routes.get_pipeline]()  # noqa: F811
+    pipeline.__dict__["embedder"] = _UnreachableEmbedder()
+
+    before = _val("embed_failures_total", reason="unreachable")
+    with pytest.raises(EmbedServerUnreachable):
+        await client.post("/v2/rag/", json=BODY)
+    assert _val("embed_failures_total", reason="unreachable") == before + 1
+
+
+async def test_search_mode_counts_hybrid(client):  # noqa: F811
+    before = _val("search_mode_total", mode="hybrid")
+    assert (await client.post("/v2/rag/", json=BODY)).status_code == 200
+    # FakeEmbedder có embed_query_sparse + sparse không rỗng -> hybrid
+    assert _val("search_mode_total", mode="hybrid") == before + 1
+
+
+async def test_search_mode_counts_dense_for_legacy_embedder(client, app, fake_pipeline):  # noqa: F811
+    from .test_api import _LegacyEmbedder
+
+    fake_pipeline.embedder = _LegacyEmbedder()
+    before_hybrid = _val("search_mode_total", mode="hybrid")
+    before_dense = _val("search_mode_total", mode="dense")
+    assert (await client.post("/v2/rag/", json=BODY)).status_code == 200
+    assert _val("search_mode_total", mode="dense") == before_dense + 1
+    assert _val("search_mode_total", mode="hybrid") == before_hybrid
+
+
+async def test_artifact_urls_returned_metric(client, app):  # noqa: F811
+    from .test_api import _ImageAssetStore
+
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
+    before = _val("artifact_urls_returned_total")
+    resp = await client.post("/v2/rag/", json=BODY)
+    total = sum(len(d["artifact_urls"]) for d in resp.json()["documents"])
+    assert total > 0
+    assert _val("artifact_urls_returned_total") == before + total
 
 
 async def test_metrics_endpoint_exposes_series(client):  # noqa: F811
@@ -203,6 +259,44 @@ async def test_ingest_gauges_updated_and_errors_swallowed(
     await worker._update_queue_gauges()  # must not raise
 
 
+async def test_ingest_embed_items_and_cache_hits(
+    pipeline, fake_status_store  # noqa: F811
+):
+    fake_status_store.ensure_pending(TEXT_ID)
+    before_items = _ival("embed_items_total")
+    before_hits = _ival("embed_cache_hits_total")
+
+    outcome = await pipeline.run(TEXT_ID)
+
+    assert outcome.ok
+    chunk_count = fake_status_store.get(TEXT_ID)["chunk_count"]
+    assert chunk_count > 0
+    assert _ival("embed_items_total") == before_items + chunk_count
+    assert _ival("embed_cache_hits_total") == before_hits  # FakeEmbedder.count_cache_hits -> 0
+
+
+async def test_ingest_embed_failure_reason(pipeline, fake_status_store):  # noqa: F811
+    from ami_rag.core.embedder import EmbedServerUnreachable
+
+    class _Unreachable:
+        dim = 8
+
+        async def embed_documents_sparse(self, items):
+            raise EmbedServerUnreachable("embed server down")
+
+        def count_cache_hits(self, items):
+            return 0
+
+    fake_status_store.ensure_pending(TEXT_ID)
+    pipeline.embedder = _Unreachable()
+    before = _ival("embed_failures_total", reason="unreachable")
+
+    outcome = await pipeline.run(TEXT_ID)
+
+    assert outcome.ok is False
+    assert _ival("embed_failures_total", reason="unreachable") == before + 1
+
+
 def test_truncate_documents_json_keeps_valid_json():
     payload = [{"text": "x" * 5000, "score": 0.9, "metadata": {}} for _ in range(10)]
     out = obs._truncate_documents_json(payload, max_chars=6000)
@@ -252,3 +346,10 @@ def test_alert_rule_metrics_exist_in_code():
     assert used, "alert rules use no metrics"
     missing = {u for u in used if u not in exported}
     assert not missing, f"alert rules reference unknown metrics: {missing}"
+
+
+def test_embed_failure_alerts_present():
+    path = Path(__file__).resolve().parents[2] / "monitoring/helm/prometheusrule.yaml"
+    text = path.read_text(encoding="utf-8")
+    assert "alert: RagEmbedFailures" in text
+    assert "alert: RagIngestEmbedFailures" in text

@@ -10,10 +10,14 @@ from ami_rag.api.schemas import (
     RetrievedDocV2,
 )
 from ami_rag.observability import (
+    ARTIFACT_URLS_RETURNED_TOTAL,
     CHUNKS_RETRIEVED,
+    EMBED_FAILURES_TOTAL,
     PRESIGN_FAILURES_TOTAL,
     RERANK_FALLBACK_TOTAL,
     RETRIEVAL_DOCS_BY_MODALITY_TOTAL,
+    SEARCH_MODE_TOTAL,
+    embed_failure_reason,
     observe_stage,
     track_retrieval,
 )
@@ -186,6 +190,7 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
                 )
             except Exception:
                 artifact_urls = []
+        ARTIFACT_URLS_RETURNED_TOTAL.inc(len(artifact_urls))
         metadata = {
             "source": chunk.get("source_path") or "",
             "page": page,
@@ -247,14 +252,20 @@ async def _run_search(
         # Hybrid: embedder có embed_query_sparse -> lấy dense + sparse của query;
         # embedder legacy (chỉ embed_query) -> dense-only (sparse=None).
         embed_q = getattr(pipeline.embedder, "embed_query_sparse", None)
-        if embed_q is not None:
-            vector, sparse = await embed_q(query)
-        else:
-            vector = await pipeline.embedder.embed_query(query)
-            sparse = None
+        try:
+            if embed_q is not None:
+                vector, sparse = await embed_q(query)
+            else:
+                vector = await pipeline.embedder.embed_query(query)
+                sparse = None
+        except Exception as exc:
+            EMBED_FAILURES_TOTAL.labels(reason=embed_failure_reason(exc)).inc()
+            raise
         # sparse dict rỗng (0 indices) -> dense-only
         if sparse is not None and not sparse.get("indices"):
             sparse = None
+    # Mode thực tế dùng để search (dense khi không có sparse) - đếm theo lượt retrieval
+    SEARCH_MODE_TOTAL.labels(mode="hybrid" if sparse is not None else "dense").inc()
     with observe_stage("vector_search"):
         hits = await pipeline.vector_store.search(
             pipeline.collection,

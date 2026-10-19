@@ -33,6 +33,15 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span, Status, StatusCode
 from prometheus_client import Counter, Gauge, Histogram
 
+from ami_rag.core.embedder import (
+    EmbedAuthError,
+    EmbedCircuitOpen,
+    EmbedInputTooLong,
+    EmbedModelMismatch,
+    EmbedServerOOM,
+    EmbedServerUnreachable,
+)
+
 logger = logging.getLogger(__name__)
 
 DASHBOARD_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -105,6 +114,40 @@ PRESIGN_FAILURES_TOTAL = Counter(
     "multimodal_rag_retrieval_presign_failures_total",
     "Presigned asset URL generation failures.",
 )
+SEARCH_MODE_TOTAL = Counter(
+    "multimodal_rag_retrieval_search_mode_total",
+    "Retrieval searches by effective search mode (dense | hybrid).",
+    ["mode"],
+)
+ARTIFACT_URLS_RETURNED_TOTAL = Counter(
+    "multimodal_rag_retrieval_artifact_urls_returned_total",
+    "artifact_urls entries returned in RetrievalResponseV2 documents.",
+)
+EMBED_FAILURES_TOTAL = Counter(
+    "multimodal_rag_retrieval_embed_failures_total",
+    "Query embed failures in the retrieval path "
+    "(reason: unreachable | auth | input_too_long | oom | model_mismatch | circuit_open | other).",
+    ["reason"],
+)
+
+# Closed ``reason`` label set (see EMBED_FAILURES_TOTAL / INGEST_EMBED_FAILURES_TOTAL):
+# one value per embed exception class in ami_rag.core.embedder + "other".
+_EMBED_FAILURE_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (EmbedServerUnreachable, "unreachable"),
+    (EmbedCircuitOpen, "circuit_open"),
+    (EmbedAuthError, "auth"),
+    (EmbedInputTooLong, "input_too_long"),
+    (EmbedServerOOM, "oom"),
+    (EmbedModelMismatch, "model_mismatch"),
+)
+
+
+def embed_failure_reason(exc: BaseException) -> str:
+    """Map an embed exception to the closed ``reason`` label set (fallback ``other``)."""
+    for cls, reason in _EMBED_FAILURE_REASONS:
+        if isinstance(exc, cls):
+            return reason
+    return "other"
 
 # --- Ingest worker metrics (prefix multimodal_rag_ingest_) ------------------
 
@@ -162,6 +205,20 @@ INGEST_DOCUMENTS = Gauge(
     "multimodal_rag_ingest_documents",
     "Documents in the ingest registry by status.",
     ["status"],
+)
+INGEST_EMBED_FAILURES_TOTAL = Counter(
+    "multimodal_rag_ingest_embed_failures_total",
+    "Embed failures in the ingest embed stage "
+    "(reason: unreachable | auth | input_too_long | oom | model_mismatch | circuit_open | other).",
+    ["reason"],
+)
+INGEST_EMBED_ITEMS_TOTAL = Counter(
+    "multimodal_rag_ingest_embed_items_total",
+    "Items embedded during ingest (denominator of the embed cache hit rate).",
+)
+INGEST_EMBED_CACHE_HITS_TOTAL = Counter(
+    "multimodal_rag_ingest_embed_cache_hits_total",
+    "Ingest embed items already in the embedding cache (numerator of the hit rate).",
 )
 
 # --- OpenTelemetry ---------------------------------------------------------

@@ -37,9 +37,13 @@ from ami_rag.core.embedder import collection_name
 from ami_rag.core.pipeline import PipelineRunner, StageOutcome
 from ami_rag.core.vector_store import ChunkRecord, VectorStore, VectorStoreError
 from ami_rag.observability import (
+    INGEST_EMBED_CACHE_HITS_TOTAL,
+    INGEST_EMBED_FAILURES_TOTAL,
+    INGEST_EMBED_ITEMS_TOTAL,
     INGEST_ITEMS_TOTAL,
     INGEST_PAGES_TOTAL,
     INGEST_PARSE_FAILURES_TOTAL,
+    embed_failure_reason,
 )
 from ami_rag.settings import parser_kwargs, resolve_image_describe_mode
 from ami_rag.sources import (
@@ -1109,11 +1113,20 @@ class VectorPipeline(PipelineRunner):
         # idempotency: xoá vector cũ của doc trước khi upsert
         await self.vector_store.delete_by_doc(self.collection, doc_id)
         items = await self._prepare_embed_items(chunks)
-        if getattr(self.embedder, "embed_documents_sparse", None):
-            dense, sparse = await self.embedder.embed_documents_sparse(items)  # không cache
-        else:  # legacy embedder không có sparse
-            dense = await self.embedder.embed_documents(items)
-            sparse = [None] * len(items)
+        INGEST_EMBED_ITEMS_TOTAL.inc(len(items))
+        # shortcut: count_cache_hits đọc cache dense trước khi embed; nhánh sparse
+        # (BGE-M3 khoá cache theo model|dim) dùng use_cache=False nên hits ~0 khi
+        # EMBED_RETURN_SPARSE=true - thêm sparse cache thì bỏ shortcut này.
+        INGEST_EMBED_CACHE_HITS_TOTAL.inc(self.embedder.count_cache_hits(items))
+        try:
+            if getattr(self.embedder, "embed_documents_sparse", None):
+                dense, sparse = await self.embedder.embed_documents_sparse(items)  # không cache
+            else:  # legacy embedder không có sparse
+                dense = await self.embedder.embed_documents(items)
+                sparse = [None] * len(items)
+        except Exception as exc:
+            INGEST_EMBED_FAILURES_TOTAL.labels(reason=embed_failure_reason(exc)).inc()
+            raise
         if len(dense) != len(chunks):
             raise RuntimeError("embed server trả số vector không khớp số chunk")
         records = [

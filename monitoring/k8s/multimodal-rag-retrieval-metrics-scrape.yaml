@@ -5,8 +5,8 @@
 # ServiceMonitor chi scrape Service trong k8s, nen tao Service khong selector +
 # Endpoints tro thang IP host de Prometheus scrape duoc. Chi can `kubectl apply`.
 #
-# DIEN DUNG __NODE_IP__: IP INTERNAL cua server chay Docker
-# (`kubectl get nodes -o wide` -> INTERNAL-IP).
+# __NODE_IP__ la placeholder - KHONG commit IP that vao repo. Truoc khi apply, thay
+# bang IP INTERNAL cua server chay Docker (`kubectl get nodes -o wide` -> INTERNAL-IP).
 #
 # Label `release: kube-prometheus-stack` phai khop serviceMonitorSelector; kiem tra:
 #   kubectl get servicemonitor -A -o yaml | grep release
@@ -36,7 +36,8 @@ metadata:
   namespace: monitoring
 subsets:
   - addresses:
-      - ip: 10.170.100.221
+      # __NODE_IP__: IP INTERNAL cua server chay Docker (xem note dau file).
+      - ip: __NODE_IP__
     ports:
       - name: metrics
         port: 8009
