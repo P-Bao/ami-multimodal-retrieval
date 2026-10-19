@@ -1,0 +1,66 @@
+# multimodal-rag-retrieval (Docker tren host) -> Prometheus scrape (pattern chirp3).
+#
+# BOI CANH: service chay o Docker tren server (API port 8009, ingest worker port 9109),
+# KHONG phai trong k8s.
+# ServiceMonitor chi scrape Service trong k8s, nen tao Service khong selector +
+# Endpoints tro thang IP host de Prometheus scrape duoc. Chi can `kubectl apply`.
+#
+# DIEN DUNG __NODE_IP__: IP INTERNAL cua server chay Docker
+# (`kubectl get nodes -o wide` -> INTERNAL-IP).
+#
+# Label `release: kube-prometheus-stack` phai khop serviceMonitorSelector; kiem tra:
+#   kubectl get servicemonitor -A -o yaml | grep release
+#
+# Khi service da deploy len k8s (Service that co named port `metrics`), XOA file nay
+# va dung monitoring/helm/servicemonitor.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: multimodal-rag-retrieval-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: multimodal-rag-retrieval-metrics
+spec:
+  ports:
+    - name: metrics
+      port: 8009
+      targetPort: 8009
+    - name: worker-metrics
+      port: 9109
+      targetPort: 9109
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: multimodal-rag-retrieval-metrics
+  namespace: monitoring
+subsets:
+  - addresses:
+      - ip: 10.170.100.221
+    ports:
+      - name: metrics
+        port: 8009
+      - name: worker-metrics
+        port: 9109
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: multimodal-rag-retrieval-metrics
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: multimodal-rag-retrieval-metrics
+  namespaceSelector:
+    matchNames:
+      - monitoring
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+    - port: worker-metrics
+      path: /metrics
+      interval: 15s

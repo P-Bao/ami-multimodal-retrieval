@@ -1,0 +1,252 @@
+[
+  {
+    "id": "text_01_lihong_zhang",
+    "modality": "text",
+    "query": "Giáo sư Lihong Zhang trao đổi học thuật tại PTIT",
+    "expected_doc_id": "6ab42382006dfa39df99aff4",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_02_thu_khoa_minh",
+    "modality": "text",
+    "query": "Thủ khoa toàn khóa Nguyễn Đăng Minh",
+    "expected_doc_id": "6a4d1ff144e99bb8b2f2ad07",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_03_nghi_quyet_tw3",
+    "modality": "text",
+    "query": "Đảng bộ Học viện quán triệt Nghị quyết Hội nghị Trung ương 3 khóa XIV",
+    "expected_doc_id": "6a6a50199ed58c75b542e475",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_04_tong_ket_dang",
+    "modality": "text",
+    "query": "Hội nghị tổng kết công tác Đảng năm 2025 triển khai nhiệm vụ 2026",
+    "expected_doc_id": "6a4d200644e99bb8b2f2ad46",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_05_co_van_hoc_tap",
+    "modality": "text",
+    "query": "Phân công giảng viên làm công tác cố vấn học tập CVHT cho các lớp chuyên ngành",
+    "expected_doc_id": "6a8f144188f0aede5ebc8828",
+    "expected_chunk_id": null,
+    "source_page": 3
+  },
+  {
+    "id": "text_06_xet_tuyen_dai_hoc",
+    "modality": "text",
+    "query": "Thông báo Xét tuyển đại học hệ chính quy đợt 1 năm 2024",
+    "expected_doc_id": "6a4d209f44e99bb8b2f2af14",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_07_thiet_ke_game",
+    "modality": "text",
+    "query": "Ngành Thiết kế và phát triển Game chỉ tiêu tuyển sinh",
+    "expected_doc_id": "6a4d1fe344e99bb8b2f2acde",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_08_quy_che_dao_tao",
+    "modality": "text",
+    "query": "Căn cứ các Quy chế tuyển sinh Quy chế đào tạo của Bộ Giáo dục và Đào tạo",
+    "expected_doc_id": "6a8eec753b7bc85ec8357ed7",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_09_van_phong_hoc_vien",
+    "modality": "text",
+    "query": "Cơ cấu tổ chức chức năng nhiệm vụ Văn phòng Học viện",
+    "expected_doc_id": "6a76b17be99630d5fb739774",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "text_10_phong_giao_vu",
+    "modality": "text",
+    "query": "Chức năng nhiệm vụ Phòng Giáo vụ Học viện Công nghệ Bưu chính Viễn thông",
+    "expected_doc_id": "6a744b547712e5c2c5f88750",
+    "expected_chunk_id": null,
+    "source_page": 0
+  },
+  {
+    "id": "table_01_lanh_dao_vien",
+    "modality": "table",
+    "query": "Thông tin liên hệ Viện trưởng Lê Nhật Thắng số điện thoại email",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-ed8ccd06f84ddff0d3d93c8d",
+    "source_page": 19
+  },
+  {
+    "id": "table_02_discrete_math",
+    "modality": "table",
+    "query": "Môn học Discrete Mathematics Toán rời rạc 1 số tín chỉ học kỳ 3",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-95f29f938f0bcd4cf5f4a9c7",
+    "source_page": 41
+  },
+  {
+    "id": "table_03_thac_si_tich_hop",
+    "modality": "table",
+    "query": "Chương trình Thạc sĩ tích hợp cử nhân Người phụ trách tư vấn",
+    "expected_doc_id": "6a8eec753b7bc85ec8357ed7",
+    "expected_chunk_id": "chunk-5180ae60c2eb3904c9806b69",
+    "source_page": 3
+  },
+  {
+    "id": "table_04_data_analysis",
+    "modality": "table",
+    "query": "Môn Phân tích dữ liệu cho kinh doanh Data Analysis for Business số tín chỉ",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-6b9c98e4485ba85a6a965277",
+    "source_page": 100
+  },
+  {
+    "id": "table_05_diem_san_tai_nang",
+    "modality": "table",
+    "query": "CTĐT tài năng được đăng ký Mức điểm sàn yêu cầu cơ sở phía Bắc",
+    "expected_doc_id": "6a8eec423b7bc85ec8357ed6",
+    "expected_chunk_id": "chunk-36a0e3cd169baa40d1cc686c",
+    "source_page": 2,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "table_06_ngoai_ngu_2",
+    "modality": "table",
+    "query": "Môn Ngoại ngữ 2 tự chọn Tiếng Hàn Quốc Tiếng Nhật Tiếng Trung tín chỉ",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-c28db26722a88fefcdbb2807",
+    "source_page": 59,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "table_07_quan_tri_du_an",
+    "modality": "table",
+    "query": "Môn Quản trị dự án số tín chỉ học phần",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-b3485bd4e6e8d55bc100ae17",
+    "source_page": 89,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "table_08_tieng_anh_course_1",
+    "modality": "table",
+    "query": "Môn học Tiếng Anh Course 1 danh mục học phần",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-ea6ad4fd07d74c6615220f2a",
+    "source_page": 31,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "table_09_thiet_ke_tuong_tac",
+    "modality": "table",
+    "query": "Thiết kế tương tác trong báo chí số học phần",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-83b6f9586defe5003be9213d",
+    "source_page": 49,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_01_url_ctdt",
+    "modality": "image",
+    "query": "Chi tiết về chương trình đào tạo sinh viên xem tại website daotao ptit edu vn",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-ee55531b83ef6e4bb3c9dabd",
+    "source_page": 35,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_02_nam_hoc_3_4",
+    "modality": "image",
+    "query": "NĂM HỌC THỨ BA NĂM HỌC THỨ TƯ",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-5dc9c117e5053e98f8575276",
+    "source_page": 53,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_03_hoc_phan_tu_chon",
+    "modality": "image",
+    "query": "Các học phần tự chọn TỔNG CỘNG sơ đồ",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-7ceff1503c6c77b94cba2e79",
+    "source_page": 97,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_map_01_so_do_truong",
+    "modality": "image",
+    "query": "Sơ đồ trường Học viện Công nghệ Bưu chính Viễn thông",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-93995145b2ff4e7b87f2480d",
+    "source_page": 14,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_map_02_mat_bang_ha_dong",
+    "modality": "image",
+    "query": "Bản đồ mặt bằng khuôn viên cơ sở đào tạo Hà Đông PTIT",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-93995145b2ff4e7b87f2480d",
+    "source_page": 14,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_map_03_toa_nha_a1_a2_a3",
+    "modality": "image",
+    "query": "Sơ đồ chỉ dẫn các tòa nhà nhà A1 A2 A3 trong trường Học viện",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-93995145b2ff4e7b87f2480d",
+    "source_page": 14
+  },
+  {
+    "id": "image_org_01_co_cau_to_chuc",
+    "modality": "image",
+    "query": "Sơ đồ cơ cấu tổ chức của Học viện Công nghệ Bưu chính Viễn thông",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-bbfbaf6cd1d8388a9018be35",
+    "source_page": 10,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_overview_01_tong_quan",
+    "modality": "image",
+    "query": "Hình ảnh tổng quan về Học viện Công nghệ Bưu chính Viễn thông",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-a7002bf74b528efb35c82526",
+    "source_page": 4,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  },
+  {
+    "id": "image_units_01_don_vi_ha_noi",
+    "modality": "image",
+    "query": "Sơ đồ các đơn vị trong Học viện và cơ sở đào tạo Hà Nội",
+    "expected_doc_id": "6a8ee761694f1f325e516aa9",
+    "expected_chunk_id": "chunk-a41def57c7e34c8f63e70017",
+    "source_page": 11,
+    "xfail": true,
+    "xfail_reason": "Low initial semantic alignment or non-discriminating caption in source index"
+  }
+]

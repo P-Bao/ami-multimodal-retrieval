@@ -1,0 +1,61 @@
+# AMI multimodal RAG: API (/v2/rag) + ingest worker (MinerU parse -> chunk -> embed máy B -> Qdrant).
+# Mongo, Qdrant, Redis, MinIO and the rerank service run outside this compose on
+# the external network `ami-network` (hosts in .env are container names there).
+services:
+  ami-rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.ami
+    container_name: ami-rag-api
+    ports:
+      - "8009:8009"
+    env_file: .env
+    environment:
+      WORKER_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: multimodal-rag-retrieval
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./scripts:/app/scripts:ro
+    networks:
+      - ami-network
+
+  ami-rag-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.ami
+    container_name: ami-rag-worker
+    command: ["ami-rag-worker"]
+    ports:
+      - "9109:9109"
+    env_file: .env
+    environment:
+      # No tracing in the worker (traces are only for /v2/rag); .env must not leak the
+      # API's OTLP endpoint into it.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+      OTEL_SERVICE_NAME: multimodal-rag-ingest
+    volumes:
+      - mineru-models:/models
+      - rag-output:/app/output
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # MinerU pipeline on GPU needs ~1-3.5 GiB (see MINERU_VIRTUAL_VRAM_SIZE in .env).
+    # CPU only: remove this block and set MINERU_DEVICE=cpu (~5x slower).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - ami-network
+
+volumes:
+  mineru-models:
+  rag-output:
+
+networks:
+  ami-network:
+    external: true

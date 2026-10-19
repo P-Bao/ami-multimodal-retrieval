@@ -1,0 +1,51 @@
+# Tempo riêng cho Multimodal RAG (chỉ nhận trace /v2/rag: span rag.retrieval).
+# Mirror release `tempo` (chart grafana/tempo 1.24.4) nhưng tách khỏi Tempo của
+# conversational-agent: release/service/PVC riêng, lưu trace trên local-path.
+#
+#   helm upgrade --install tempo-multimodal-rag grafana/tempo --version 1.24.4 \
+#     -n monitoring -f monitoring/helm/tempo-multimodal-rag-values.yaml
+#
+# Grafana URL (in-cluster HTTP API):  http://tempo-multimodal-rag.monitoring.svc.cluster.local:3200
+# App ghi trace (OTLP/HTTP, NodePort 4318 của service) -> xem NodePort bằng:
+#   kubectl get svc tempo-multimodal-rag -n monitoring
+nameOverride: tempo-multimodal-rag
+fullnameOverride: tempo-multimodal-rag
+
+nodeSelector:
+  kubernetes.io/hostname: ptit-naver-ai-server
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: local-path
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+service:
+  type: NodePort
+
+tempo:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  retention: 744h
+  server:
+    grpc_listen_port: 9095
+    http_listen_port: 3200
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal

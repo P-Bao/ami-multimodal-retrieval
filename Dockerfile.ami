@@ -1,0 +1,28 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# libreoffice: Office (doc/docx) -> PDF before MinerU parsing
+# libgl1/libglib2.0-0: OpenCV runtime used by MinerU
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    libgl1 \
+    libglib2.0-0 \
+    fonts-dejavu-core \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml setup.py requirements.txt MANIFEST.in README.md LICENSE ./
+COPY raganything ./raganything
+COPY ami_rag ./ami_rag
+COPY scripts ./scripts
+
+RUN pip install --no-cache-dir ".[service]"
+
+# MinerU model cache (mount a volume here to avoid re-downloading)
+ENV MINERU_MODEL_SOURCE=huggingface \
+    HF_HOME=/models/huggingface
+
+EXPOSE 8009 9109
+
+CMD ["ami-rag-api"]

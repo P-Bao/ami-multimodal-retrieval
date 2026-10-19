@@ -1,0 +1,88 @@
+# Alert rules cho AMI multimodal RAG (API /v2/rag + ingest worker).
+# Label `release: kube-prometheus-stack` phai khop ruleSelector cua Prometheus:
+#   kubectl get prometheus -A -o jsonpath='{.items[*].spec.ruleSelector}'
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: multimodal-rag-retrieval
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: multimodal-rag-ingest
+      rules:
+        - alert: RagIngestBacklogHigh
+          expr: sum(multimodal_rag_ingest_stream_pending) + sum(multimodal_rag_ingest_stream_lag) > 50
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Hang doi rag:ingest ton dong"
+            description: "pending + lag = {{ $value }} message trong 15 phut. Kiem tra worker (GPU/MinerU) va /admin/pipeline_status."
+        - alert: RagIngestFailures
+          expr: sum(increase(multimodal_rag_ingest_events_total{result="failed"}[30m])) > 5
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ingest loi lien tuc"
+            description: "{{ $value }} event failed trong 30 phut. Xem GET /admin/pipeline_status va log ami-rag-worker."
+        - alert: RagIngestParseFailures
+          expr: sum(increase(multimodal_rag_ingest_parse_failures_total[30m])) > 3
+          labels:
+            severity: warning
+          annotations:
+            summary: "MinerU parse loi"
+            description: "{{ $value }} lan parse that bai trong 30 phut (file hong, thieu GPU/model, LibreOffice)."
+        - alert: RagCrawlImageFailures
+          expr: sum(increase(multimodal_rag_ingest_crawl_image_failures_total[30m])) > 20
+          labels:
+            severity: warning
+          annotations:
+            summary: "Tai anh crawl loi lien tuc"
+            description: "{{ $value }} URL anh (section 'Hinh anh') loi trong 30 phut - anh mat khoi index; kiem tra log worker va SSL allowlist PTIT."
+        - alert: RagIngestWorkerDown
+          expr: absent(up{job=~".*multimodal-rag-retrieval.*", endpoint="worker-metrics"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Ingest worker khong con duoc scrape"
+            description: "Target worker-metrics (:9109) khong UP > 5 phut."
+    - name: multimodal-rag-retrieval
+      rules:
+        - alert: RagRetrievalErrorRate
+          expr: |
+            sum(rate(multimodal_rag_retrieval_errors_total[10m]))
+              / clamp_min(sum(rate(multimodal_rag_retrieval_requests_total[10m])), 0.001) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ty le loi /v2/rag > 5%"
+            description: "Error ratio = {{ $value | humanizePercentage }} trong 10 phut."
+        - alert: RagRerankFallback
+          expr: |
+            sum(rate(multimodal_rag_retrieval_rerank_fallback_total[10m]))
+              / clamp_min(sum(rate(multimodal_rag_retrieval_requests_total[10m])), 0.001) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Rerank service thuong xuyen fallback"
+            description: "{{ $value | humanizePercentage }} request phai fallback (rerank loi/rong)."
+        - alert: RagPresignFailures
+          expr: sum(increase(multimodal_rag_retrieval_presign_failures_total[15m])) > 10
+          labels:
+            severity: warning
+          annotations:
+            summary: "Tao presigned URL MinIO that bai"
+            description: "{{ $value }} lan loi trong 15 phut, artifact_url/file_url se null."
+        - alert: RagMetricsDown
+          expr: absent(up{job=~".*multimodal-rag-retrieval.*", endpoint="metrics"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "API /metrics khong con duoc scrape"
+            description: "Target metrics (:8009) khong UP > 5 phut."

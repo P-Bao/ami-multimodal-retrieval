@@ -1,0 +1,142 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raganything"
+dynamic = ["version"]
+authors = [
+    {name = "Zirui Guo"}
+]
+description = "RAGAnything: All-in-One RAG System"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "huggingface_hub",
+    "mineru[core]>=3.4.1,<4",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+image = ["Pillow>=10.0.0"]
+text = ["reportlab>=4.0.0"]
+office = []  # Requires LibreOffice (external program)
+paddleocr = [
+    "paddleocr>=2.7.0",
+    "pypdfium2>=4.25.0",
+]
+markdown = [
+    "markdown>=3.4.0",
+    "weasyprint>=60.0",
+    "pygments>=2.10.0",
+]
+audio = ["faster-whisper>=1.0.0"]
+video = [
+    "scenedetect[opencv]>=0.6.0",
+    "moviepy>=2.0.0",
+    "faster-whisper>=1.0.0",
+    "opencv-python>=4.8.0",
+]
+service = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.3",
+    "redis>=5.0",
+    "pymongo>=4.6",
+    "qdrant-client>=1.9",
+    "httpx>=0.27",
+    "minio>=7.2",
+    "prometheus-client>=0.21.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.28.0",
+    "openai>=2.0",
+    "pdfplumber>=0.11",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+]
+all = [
+    "Pillow>=10.0.0",
+    "reportlab>=4.0.0",
+    "paddleocr>=2.7.0",
+    "pypdfium2>=4.25.0",
+    "markdown>=3.4.0",
+    "weasyprint>=60.0",
+    "pygments>=2.10.0",
+    "faster-whisper>=1.0.0",
+    "scenedetect[opencv]>=0.6.0",
+    "moviepy>=2.0.0",
+    "opencv-python>=4.8.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.3",
+    "redis>=5.0",
+    "pymongo>=4.6",
+    "qdrant-client>=1.9",
+    "httpx>=0.27",
+    "minio>=7.2",
+    "prometheus-client>=0.21.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.28.0",
+    "openai>=2.0",
+]
+
+[project.scripts]
+ami-rag-api = "ami_rag.api.main:run"
+ami-rag-worker = "ami_rag.workers.ingest_worker:run"
+ami-rag = "ami_rag.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/HKUDS/RAG-Anything"
+Documentation = "https://github.com/HKUDS/RAG-Anything"
+Repository = "https://github.com/HKUDS/RAG-Anything"
+Issues = "https://github.com/HKUDS/RAG-Anything/issues"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=6.0",
+    "pytest-asyncio",
+    "ruff",
+    "black",
+    "isort",
+    "flake8",
+    "mypy",
+    "openai",
+    "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+include = ["raganything*", "ami_rag*"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "raganything.__version__"}
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint.per-file-ignores]
+# AMI service (ami_rag): FastAPI Depends-in-defaults and intentional fire-and-forget blind excepts
+"ami_rag/api/**" = ["B008", "BLE001"]
+"ami_rag/cli.py" = ["BLE001", "S110"]
+"ami_rag/workers/**" = ["BLE001"]
+"ami_rag/storage/**" = ["BLE001"]
+"ami_rag/core/**" = ["BLE001", "S110"]
+"tests/ami_service/**" = ["BLE001", "TRY002", "PERF102"]
+# backend_data_extract: fallback có chủ ý khi OCR service/file lỗi (giữ MinerU output)
+"raganything/backend_data_extract.py" = ["BLE001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test*.py"]
+asyncio_mode = "auto"

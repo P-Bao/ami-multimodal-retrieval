@@ -1,0 +1,20 @@
+# Dung khi service chay TRONG k8s (Service co label app: multimodal-rag-retrieval,
+# named ports "metrics" -> 8009 (API) va "worker-metrics" -> 9109 (ingest worker)). Khi chay Docker tren host, dung
+# monitoring/k8s/multimodal-rag-retrieval-metrics-scrape.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: multimodal-rag-retrieval
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: multimodal-rag-retrieval
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+    - port: worker-metrics
+      path: /metrics
+      interval: 15s

@@ -1,0 +1,40 @@
+# Grafana datasource "Tempo (multimodal_rag_log)" nạp qua sidecar datasource của
+# kube-prometheus-stack (label grafana_datasource=1) - không phải helm upgrade Grafana.
+#   kubectl apply -f monitoring/helm/grafana-datasource-tempo-multimodal-rag.yaml
+# Cấu hình khớp Tempo cũ (uid afy8sa3jsx88wf): HTTP API 3200, streaming TẮT.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-tempo-multimodal-rag
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  tempo-multimodal-rag.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo (multimodal_rag_log)
+        type: tempo
+        uid: multimodal_rag_log
+        access: proxy
+        isDefault: false
+        url: http://tempo-multimodal-rag.monitoring.svc.cluster.local:3200
+        jsonData:
+          nodeGraph:
+            enabled: true
+          search:
+            enabled: false
+          metrics:
+            enabled: false
+          streaming:
+            enabled: false
+          traceToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: "-2m"
+            spanEndTimeShift: "2m"
+            tags:
+              - key: service.name
+                value: service_name
+            queries:
+              - name: requests_rate
+                query: "sum(rate(multimodal_rag_retrieval_requests_total[5m]))"
