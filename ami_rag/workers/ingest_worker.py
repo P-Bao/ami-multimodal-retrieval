@@ -81,7 +81,9 @@ class IngestWorker:
         source = select_source(doc)
         if source == SOURCE_MINIO_PARSE:
             if not doc.get("file_path"):
-                raise ValueError(f"document {doc_id} has no file_path in MinIO to parse")
+                raise ValueError(
+                    f"document {doc_id} has no file_path in MinIO to parse"
+                )
         elif not (doc.get("content") or "").strip():
             self.log.warning("document %s has empty content, skipping", doc_id)
             return None
@@ -172,10 +174,14 @@ class IngestWorker:
                 INGEST_EVENTS_TOTAL.labels(event=event.event, result="processed").inc()
             else:
                 INGEST_EVENTS_TOTAL.labels(event=event.event, result="skipped").inc()
-                await asyncio.to_thread(self.state_repo.release_attempt, event.document_id)
+                await asyncio.to_thread(
+                    self.state_repo.release_attempt, event.document_id
+                )
             await self.queue.ack(message_id)
         finally:
-            INGEST_DURATION_SECONDS.labels(source=source).observe(time.perf_counter() - started)
+            INGEST_DURATION_SECONDS.labels(source=source).observe(
+                time.perf_counter() - started
+            )
             INGEST_IN_FLIGHT.dec()
 
     async def _update_queue_gauges(self) -> None:

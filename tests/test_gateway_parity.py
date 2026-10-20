@@ -7,6 +7,7 @@ batch embed (text / bảng / ảnh+text) -> embed query -> cosine -> rerank.
 
 Skip nếu repo gateway không có trên máy này (máy dev/CI khác).
 """
+
 import asyncio
 import base64
 import importlib.util
@@ -66,15 +67,23 @@ class FakeUpstream:
             # điểm giả theo nội dung: doc chứa "Doanh thu" liên quan nhất
             scores = []
             for doc in body["documents"]:
-                parts = doc["content"] if isinstance(doc, dict) else [{"type": "text", "text": doc}]
-                text = " ".join(p.get("text", "") for p in parts if p.get("type") == "text")
+                parts = (
+                    doc["content"]
+                    if isinstance(doc, dict)
+                    else [{"type": "text", "text": doc}]
+                )
+                text = " ".join(
+                    p.get("text", "") for p in parts if p.get("type") == "text"
+                )
                 scores.append(0.9 if "doanh thu" in text.lower() else 0.1)
             ranked = sorted(range(len(scores)), key=lambda i: -scores[i])
             return httpx.Response(
                 200,
-                json={"results": [
-                    {"index": i, "relevance_score": scores[i]} for i in ranked
-                ]},
+                json={
+                    "results": [
+                        {"index": i, "relevance_score": scores[i]} for i in ranked
+                    ]
+                },
             )
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -128,8 +137,10 @@ async def test_handshake_and_embed_batch_like_example(gateway):
     )
     b64 = base64.b64encode(PNG_BYTES).decode("ascii")
     docs = [
-        "Hà Nội là thủ đô của Việt Nam.",                 # text
-        {"text": "Caption: Kết quả kinh doanh 2025\n\n| Quý | Doanh thu |\n| --- | --- |\n| Q1 | 120 |"},  # bảng (text content)
+        "Hà Nội là thủ đô của Việt Nam.",  # text
+        {
+            "text": "Caption: Kết quả kinh doanh 2025\n\n| Quý | Doanh thu |\n| --- | --- |\n| Q1 | 120 |"
+        },  # bảng (text content)
         {"text": "Trang báo cáo tài chính", "image_b64": b64},  # ảnh + text
     ]
     vectors = await emb.embed_documents(docs)
@@ -176,10 +187,15 @@ async def test_rerank_like_example(gateway, monkeypatch):
         "Lợi nhuận quý 3 là bao nhiêu?",
         [
             "Hà Nội là thủ đô của Việt Nam.",
-            {"content": [
-                {"type": "text", "text": "Bảng doanh thu quý"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
-            ]},
+            {
+                "content": [
+                    {"type": "text", "text": "Bảng doanh thu quý"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,aGk="},
+                    },
+                ]
+            },
         ],
         top_n=2,
     )

@@ -178,4 +178,3 @@ class TestMetricsCallback:
         m.on_document_complete(file_path="a.pdf")
         m.reset()
         assert m.metrics["documents_processed"] == 0
-

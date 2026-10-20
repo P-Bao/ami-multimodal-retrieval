@@ -156,7 +156,9 @@ class FakeVectorStore:
         self.sparse_collections: set[str] = set()
         self.search_limits: list[int] = []
 
-    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None:
+    async def ensure_collection(
+        self, name: str, dim: int, *, sparse: bool = True
+    ) -> None:
         self.collections[name] = dim
         # fake không có khái niệm legacy: chỉ ghi nhận sparse đã bật
         if sparse:
@@ -202,7 +204,11 @@ class FakeModalProcessor:
         return [
             {
                 "description": f"mô tả {content_type}",
-                "entity_info": {"entity_name": "x", "entity_type": content_type, "summary": "x"},
+                "entity_info": {
+                    "entity_name": "x",
+                    "entity_type": content_type,
+                    "summary": "x",
+                },
                 "window_meta": None,
             }
         ]
@@ -287,7 +293,9 @@ class FakeRerank:
         if self.fail:
             raise ConnectionError("rerank down")
         n = min(top_n or len(documents), len(documents))
-        return [{"index": i, "relevance_score": round(0.9 - i * 0.1, 2)} for i in range(n)]
+        return [
+            {"index": i, "relevance_score": round(0.9 - i * 0.1, 2)} for i in range(n)
+        ]
 
 
 @pytest.fixture
@@ -361,7 +369,9 @@ def fake_modal_processors():
     calls = []
 
     class _P(FakeModalProcessor):
-        async def generate_chunk_sections(self, modal_content, content_type, item_info=None, entity_name=None):
+        async def generate_chunk_sections(
+            self, modal_content, content_type, item_info=None, entity_name=None
+        ):
             calls.append((content_type, dict(modal_content)))
             return [
                 {
@@ -371,7 +381,10 @@ def fake_modal_processors():
                 }
             ]
 
-    procs = {t: _P(calls) for t in ("image", "table", "equation", "audio", "video", "generic")}
+    procs = {
+        t: _P(calls)
+        for t in ("image", "table", "equation", "audio", "video", "generic")
+    }
     return procs
 
 
@@ -381,7 +394,13 @@ def fake_queue():
 
 
 @pytest.fixture
-def fake_pipeline(fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo):
+def fake_pipeline(
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_docs_repo,
+):
     from ami_rag.core.vector_pipeline import VectorPipeline
     from ami_rag.settings import Settings
 

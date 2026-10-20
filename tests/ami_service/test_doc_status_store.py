@@ -41,13 +41,21 @@ def test_ensure_pending_creates_once():
 def test_mark_stage_and_indexed():
     s = _make_store()
     s.ensure_pending("doc-1")
-    s.mark_stage("doc-1", "chunk", chunk_count=12, embed_model="Qwen/Qwen3-VL-Embedding-2B")
+    s.mark_stage(
+        "doc-1", "chunk", chunk_count=12, embed_model="Qwen/Qwen3-VL-Embedding-2B"
+    )
     row = s.get("doc-1")
     assert row["status"] == STATUS_PROCESSING
     assert row["stage"] == "chunk"
     assert row["chunk_count"] == 12
 
-    s.mark_indexed("doc-1", chunk_count=12, embed_model="Qwen/Qwen3-VL-Embedding-2B", embed_dim=2048, chunker_version="v1")
+    s.mark_indexed(
+        "doc-1",
+        chunk_count=12,
+        embed_model="Qwen/Qwen3-VL-Embedding-2B",
+        embed_dim=2048,
+        chunker_version="v1",
+    )
     row = s.get("doc-1")
     assert row["status"] == STATUS_INDEXED
     assert row["stage"] == "indexed"
@@ -70,7 +78,9 @@ def test_mark_failed_increments_attempts():
 def test_mark_stale_only_indexed():
     s = _make_store()
     s.ensure_pending("doc-a")
-    s.mark_indexed("doc-b", chunk_count=1, embed_model="m", embed_dim=8, chunker_version="v1")
+    s.mark_indexed(
+        "doc-b", chunk_count=1, embed_model="m", embed_dim=8, chunker_version="v1"
+    )
     s.ensure_pending("doc-c")
     s.mark_failed("doc-c", "err", "chunk")
     n = s.mark_stale()
@@ -88,14 +98,23 @@ def test_legacy_processed_reads_as_stale():
 
 
 def test_effective_status_rules():
-    current = {"status": STATUS_INDEXED, "embed_model": "Qwen/Qwen3-VL-Embedding-2B", "chunker_version": "v1"}
-    assert effective_status(current, "Qwen/Qwen3-VL-Embedding-2B", "v1") == STATUS_INDEXED
+    current = {
+        "status": STATUS_INDEXED,
+        "embed_model": "Qwen/Qwen3-VL-Embedding-2B",
+        "chunker_version": "v1",
+    }
+    assert (
+        effective_status(current, "Qwen/Qwen3-VL-Embedding-2B", "v1") == STATUS_INDEXED
+    )
     # lệch embed_model -> stale
     assert effective_status(current, "other-model", "v1") == STATUS_STALE
     # lệch chunker_version -> stale
     assert effective_status(current, "Qwen/Qwen3-VL-Embedding-2B", "v2") == STATUS_STALE
     # legacy processed -> stale
-    assert effective_status({"status": LEGACY_PROCESSED}, "Qwen/Qwen3-VL-Embedding-2B") == STATUS_STALE
+    assert (
+        effective_status({"status": LEGACY_PROCESSED}, "Qwen/Qwen3-VL-Embedding-2B")
+        == STATUS_STALE
+    )
     # pending/failed giữ nguyên
     assert effective_status({"status": STATUS_PENDING}) == STATUS_PENDING
     assert effective_status({"status": STATUS_FAILED}) == STATUS_FAILED
@@ -104,7 +123,9 @@ def test_effective_status_rules():
 def test_counts_and_all_rows():
     s = _make_store()
     s.ensure_pending("doc-a")
-    s.mark_indexed("doc-b", chunk_count=1, embed_model="m", embed_dim=8, chunker_version="v1")
+    s.mark_indexed(
+        "doc-b", chunk_count=1, embed_model="m", embed_dim=8, chunker_version="v1"
+    )
     s.mark_failed("doc-c", "err", "chunk")
     counts = s.counts()
     assert counts == {STATUS_PENDING: 1, STATUS_INDEXED: 1, STATUS_FAILED: 1}
@@ -130,7 +151,9 @@ def test_lockfile_blocks_second_acquire(tmp_path):
 def test_lockfile_steals_dead_pid(tmp_path):
     lock = Lockfile(tmp_path / "cli.lock")
     # pid không tồn tại (rất khó trùng với pid sống trong test env)
-    lock.path.write_text(f"pid:999999999\nheld_at:{time.time():.0f}\n", encoding="utf-8")
+    lock.path.write_text(
+        f"pid:999999999\nheld_at:{time.time():.0f}\n", encoding="utf-8"
+    )
     lock.acquire()  # không raise - pid chết -> lấy lại khoá
     assert "pid:999999999" not in lock.path.read_text(encoding="utf-8")
     lock.release()

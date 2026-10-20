@@ -112,9 +112,7 @@ class RAGAnything(QueryMixin, ProcessorMixin):
 
     def _create_context_extractor(self) -> ContextExtractor:
         """Create context extractor (không cần LightRAG tokenizer)."""
-        return ContextExtractor(
-            config=self._create_context_config(), tokenizer=None
-        )
+        return ContextExtractor(config=self._create_context_config(), tokenizer=None)
 
     def _initialize_processors(self):
         """Initialize multimodal processors (lightrag=None tolerant)."""

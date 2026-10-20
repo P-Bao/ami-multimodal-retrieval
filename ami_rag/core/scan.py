@@ -38,7 +38,9 @@ async def scan_pending(store, docs_repo) -> dict:
     return {"created": created, "existing": existing}
 
 
-def reindex_candidates(rows: list[dict], *, embed_model: str, chunker_version: str) -> list[dict]:
+def reindex_candidates(
+    rows: list[dict], *, embed_model: str, chunker_version: str
+) -> list[dict]:
     """Rows đủ điều kiện reindex: pending + stale (bao gồm legacy `processed`).
 
     Indexed (cùng embed model/chunker) và failed loại trừ (failed -> retry).

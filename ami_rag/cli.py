@@ -63,7 +63,9 @@ def _build_mongo_db(settings):
 def _build_qdrant_client(settings):
     from qdrant_client import QdrantClient
 
-    return QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None)
+    return QdrantClient(
+        url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None
+    )
 
 
 def _resolve_doc_ids(raw_ids: list[str], docs_repo, store) -> list[tuple[str, str]]:
@@ -87,7 +89,9 @@ def _fmt_time(value) -> str:
 
 
 def _print_rows(rows: list[dict]) -> None:
-    print(f"{'doc_id':<26}{'status':<12}{'stage':<10}{'attempts':>9}  {'updated_at':<20}error")
+    print(
+        f"{'doc_id':<26}{'status':<12}{'stage':<10}{'attempts':>9}  {'updated_at':<20}error"
+    )
     for row in rows:
         error = (row.get("error") or "")[:80]
         print(
@@ -134,7 +138,9 @@ def _confirm(prompt: str, *, yes: bool) -> bool:
 # --------------------------------------------------------------------------
 # status
 # --------------------------------------------------------------------------
-async def cmd_status(args, *, settings=None, store=None, docs_repo=None, embedder=None) -> None:
+async def cmd_status(
+    args, *, settings=None, store=None, docs_repo=None, embedder=None
+) -> None:
     """Xem trạng thái doc. Mặc định chỉ đọc local: 0 LLM, 0 embed, 0 model call."""
     import datetime
 
@@ -181,10 +187,14 @@ async def cmd_status(args, *, settings=None, store=None, docs_repo=None, embedde
         and row["updated_at"] < stuck_cutoff
     ]
     if stuck:
-        print(f"TREO: {len(stuck)} doc đang `processing` quá "
-              f"{settings.CLI_STUCK_PROCESSING_MINUTES} phút (tiến trình chết giữa chừng?):")
+        print(
+            f"TREO: {len(stuck)} doc đang `processing` quá "
+            f"{settings.CLI_STUCK_PROCESSING_MINUTES} phút (tiến trình chết giữa chừng?):"
+        )
         for row in stuck[:10]:
-            print(f"  {row['_id']} stage={row.get('stage') or '-'} updated_at={_fmt_time(row.get('updated_at'))}")
+            print(
+                f"  {row['_id']} stage={row.get('stage') or '-'} updated_at={_fmt_time(row.get('updated_at'))}"
+            )
 
     if args.doc:
         for doc_id, label in _resolve_doc_ids([args.doc], docs_repo, store):
@@ -194,7 +204,9 @@ async def cmd_status(args, *, settings=None, store=None, docs_repo=None, embedde
             else:
                 from ami_rag.storage.doc_status import effective_status as es
 
-                row["effective"] = es(row, settings.EMBED_MODEL, settings.CHUNKER_VERSION)
+                row["effective"] = es(
+                    row, settings.EMBED_MODEL, settings.CHUNKER_VERSION
+                )
                 print(f"\n{label}:")
                 print(_detail_line(row))
         return
@@ -235,7 +247,9 @@ async def _check_embed_server(settings, embedder=None) -> None:
                 f"  model={body.get('model', '-')} device={body.get('device', '-')}"
             )
     except Exception as exc:
-        health_line = f"embed server /health: unreachable ({settings.EMBED_SERVER_URL}): {exc}"
+        health_line = (
+            f"embed server /health: unreachable ({settings.EMBED_SERVER_URL}): {exc}"
+        )
     print(health_line)
     # Dù /health unreachable, vẫn thử handshake để báo lỗi rõ hơn.
     try:
@@ -252,7 +266,9 @@ async def _check_embed_server(settings, embedder=None) -> None:
 # --------------------------------------------------------------------------
 # retry
 # --------------------------------------------------------------------------
-async def cmd_retry(args, *, settings=None, store=None, docs_repo=None, runner=None) -> int:
+async def cmd_retry(
+    args, *, settings=None, store=None, docs_repo=None, runner=None
+) -> int:
     """Chạy lại doc `failed`, tiếp tục từ stage lỗi bằng dữ liệu trung gian đã lưu."""
     settings = settings or get_settings()
     store = store or _build_status_store(settings)
@@ -273,7 +289,9 @@ async def cmd_retry(args, *, settings=None, store=None, docs_repo=None, runner=N
     else:
         raise ValueError("retry cần --doc hoặc --all-failed")
 
-    skipped_attempts = [row for row in selected if row.get("attempts", 0) >= args.max_attempts]
+    skipped_attempts = [
+        row for row in selected if row.get("attempts", 0) >= args.max_attempts
+    ]
     selected = [row for row in selected if row.get("attempts", 0) < args.max_attempts]
     for row in skipped_attempts:
         print(
@@ -285,8 +303,10 @@ async def cmd_retry(args, *, settings=None, store=None, docs_repo=None, runner=N
         print("không có doc nào để retry")
         return 0
 
-    print(f"retry {len(selected)} doc (từ stage lỗi"
-          f"{f', ép --from-stage {args.from_stage}' if args.from_stage else ''})")
+    print(
+        f"retry {len(selected)} doc (từ stage lỗi"
+        f"{f', ép --from-stage {args.from_stage}' if args.from_stage else ''})"
+    )
     if not _confirm("Chạy retry?", yes=args.yes):
         print("đã huỷ")
         return 0
@@ -316,14 +336,18 @@ async def cmd_retry(args, *, settings=None, store=None, docs_repo=None, runner=N
             failed_n += 1
             print(f"FAILED {doc_id} (stage={outcome.stage}): {outcome.error[:200]}")
 
-    print(f"retry xong: thành công={ok} thất bại={failed_n} bỏ qua={len(skipped_attempts)}")
+    print(
+        f"retry xong: thành công={ok} thất bại={failed_n} bỏ qua={len(skipped_attempts)}"
+    )
     return 1 if failed_n else 0
 
 
 # --------------------------------------------------------------------------
 # reindex
 # --------------------------------------------------------------------------
-async def cmd_reindex(args, *, settings=None, store=None, runner=None, docs_repo=None) -> int:
+async def cmd_reindex(
+    args, *, settings=None, store=None, runner=None, docs_repo=None
+) -> int:
     """Xử lý lại: chunk -> embed từ dữ liệu parse đã lưu; --scan quét docs cũ."""
     from ami_rag.core.lockfile import Lockfile, LockHeld
     from ami_rag.core.pipeline import validate_stage
@@ -386,7 +410,9 @@ async def cmd_reindex(args, *, settings=None, store=None, runner=None, docs_repo
         total_chunks = total_cache_hits = 0
         for row in selected:
             outcome = await runner.run(
-                row["_id"], from_stage=_from_stage_for(row, from_stage, runner), dry_run=True
+                row["_id"],
+                from_stage=_from_stage_for(row, from_stage, runner),
+                dry_run=True,
             )
             total_chunks += outcome.chunk_count
             total_cache_hits += outcome.cache_hits
@@ -437,7 +463,9 @@ async def cmd_reindex(args, *, settings=None, store=None, runner=None, docs_repo
                 print(f"indexed {row['_id']} chunks={outcome.chunk_count}")
             else:
                 failed_n += 1
-                print(f"FAILED {row['_id']} (stage={outcome.stage}): {outcome.error[:200]}")
+                print(
+                    f"FAILED {row['_id']} (stage={outcome.stage}): {outcome.error[:200]}"
+                )
     finally:
         lock.release()
 
@@ -499,7 +527,9 @@ async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None)
         if do_qdrant:
             qdrant_client = qdrant_client or _build_qdrant_client(settings)
             targets.extend(
-                await asyncio.to_thread(find_legacy_qdrant, qdrant_client, settings.WORKSPACE)
+                await asyncio.to_thread(
+                    find_legacy_qdrant, qdrant_client, settings.WORKSPACE
+                )
             )
             if getattr(args, "stale_models", False):
                 current = collection_name(
@@ -517,12 +547,18 @@ async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None)
         print(f"STOPPED: không dò được collection legacy: {exc}")
         return 2
 
-    current = collection_name(settings.WORKSPACE, settings.EMBED_MODEL, settings.CHUNKER_VERSION)
+    current = collection_name(
+        settings.WORKSPACE, settings.EMBED_MODEL, settings.CHUNKER_VERSION
+    )
     print(f"workspace: {settings.WORKSPACE}")
     print(
         f"giữ lại: Mongo `{settings.RAG_DOCUMENTS_COLLECTION}` (registry/DocStatusStore), "
         f"Qdrant `{current}` (collection hiện tại)"
-        + ("" if getattr(args, "stale_models", False) else f" và mọi `{settings.WORKSPACE}__*` (vector pipeline)")
+        + (
+            ""
+            if getattr(args, "stale_models", False)
+            else f" và mọi `{settings.WORKSPACE}__*` (vector pipeline)"
+        )
     )
     if not targets:
         print("không có collection legacy nào cần xoá")
@@ -535,7 +571,9 @@ async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None)
         print(f"dry-run: {len(targets)} collection legacy sẽ bị xoá (không ghi gì)")
         return 0
 
-    if not _confirm(f"Xoá {len(targets)} collection legacy (KHÔNG THỂ HOÀN TÁC)?", yes=args.yes):
+    if not _confirm(
+        f"Xoá {len(targets)} collection legacy (KHÔNG THỂ HOÀN TÁC)?", yes=args.yes
+    ):
         print("đã huỷ")
         return 0
 
@@ -549,7 +587,9 @@ async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None)
             failed.extend(err)
         if do_qdrant:
             names = [t.name for t in targets if t.db == "qdrant"]
-            ok, err = await asyncio.to_thread(delete_qdrant_collections, qdrant_client, names)
+            ok, err = await asyncio.to_thread(
+                delete_qdrant_collections, qdrant_client, names
+            )
             deleted.extend(ok)
             failed.extend(err)
     except Exception as exc:
@@ -588,7 +628,9 @@ def main() -> None:
     )
     p_status.add_argument("--failed", action="store_true", help="chỉ hiện doc failed")
     p_status.add_argument("--stale", action="store_true", help="chỉ hiện doc stale")
-    p_status.add_argument("--doc", default=None, help="xem chi tiết một doc (id hoặc path)")
+    p_status.add_argument(
+        "--doc", default=None, help="xem chi tiết một doc (id hoặc path)"
+    )
     p_status.add_argument(
         "--check-embed-server",
         action="store_true",
@@ -597,7 +639,9 @@ def main() -> None:
 
     p_retry = sub.add_parser("retry", help="chạy lại doc failed từ stage lỗi")
     p_retry.add_argument("--doc", nargs="*", default=[], help="id hoặc path cụ thể")
-    p_retry.add_argument("--all-failed", action="store_true", help="chạy lại mọi doc failed")
+    p_retry.add_argument(
+        "--all-failed", action="store_true", help="chạy lại mọi doc failed"
+    )
     p_retry.add_argument(
         "--from-stage",
         choices=list(STAGES[:-1]),
@@ -606,8 +650,12 @@ def main() -> None:
     )
     p_retry.add_argument("--max-attempts", type=int, default=3)
     p_retry.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
-    p_retry.add_argument("--embed-server-url", default=None, help="override EMBED_SERVER_URL")
-    p_retry.add_argument("--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE")
+    p_retry.add_argument(
+        "--embed-server-url", default=None, help="override EMBED_SERVER_URL"
+    )
+    p_retry.add_argument(
+        "--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE"
+    )
 
     p_reindex = sub.add_parser(
         "reindex", help="xử lý lại thủ công: chunk -> embed từ dữ liệu đã lưu"
@@ -625,7 +673,9 @@ def main() -> None:
         "rồi reindex pending + stale (bao gồm legacy `processed` của pipeline cũ)",
     )
     p_reindex.add_argument("--doc", nargs="*", default=[], help="id hoặc path cụ thể")
-    p_reindex.add_argument("--all", action="store_true", help="xử lý lại mọi doc có bản ghi")
+    p_reindex.add_argument(
+        "--all", action="store_true", help="xử lý lại mọi doc có bản ghi"
+    )
     p_reindex.add_argument(
         "--from-stage",
         choices=list(STAGES[:-1]),
@@ -639,8 +689,12 @@ def main() -> None:
         help="in số doc, số chunk cần embed, số chunk trúng cache; không gọi embed, không ghi",
     )
     p_reindex.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
-    p_reindex.add_argument("--embed-server-url", default=None, help="override EMBED_SERVER_URL")
-    p_reindex.add_argument("--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE")
+    p_reindex.add_argument(
+        "--embed-server-url", default=None, help="override EMBED_SERVER_URL"
+    )
+    p_reindex.add_argument(
+        "--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE"
+    )
     p_reindex.add_argument(
         "--limit", type=int, default=0, help="chỉ xử lý N doc đầu (0 = không giới hạn)"
     )

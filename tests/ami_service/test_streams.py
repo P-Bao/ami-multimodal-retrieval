@@ -40,7 +40,9 @@ class FakeAsyncRedis:
     def _pending_entry(self, stream, group):
         return self.pending.setdefault((stream, group), {})
 
-    async def xautoclaim(self, stream, group, consumer, min_idle_time=0, start_id="0-0", count=10):
+    async def xautoclaim(
+        self, stream, group, consumer, min_idle_time=0, start_id="0-0", count=10
+    ):
         # fake: every delivered-but-unacked message counts as idle long enough
         pending = self._pending_entry(stream, group)
         ids = [k for k in pending if k != "_delivered"]

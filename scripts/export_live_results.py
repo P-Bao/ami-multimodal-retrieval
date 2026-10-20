@@ -16,7 +16,9 @@ from tests.test_retrieval_recall_live import _load_cases, run_case
 
 def main():
     parser = argparse.ArgumentParser(description="Export live API retrieval results")
-    parser.add_argument("--output", required=True, help="Đường dẫn file JSON kết quả đầu ra")
+    parser.add_argument(
+        "--output", required=True, help="Đường dẫn file JSON kết quả đầu ra"
+    )
     parser.add_argument("--top-k", type=int, default=5, help="Số document top_k")
     args = parser.parse_args()
 
@@ -35,10 +37,14 @@ def main():
         if res.get("hit"):
             hits[mod] = hits.get(mod, 0) + 1
         status = f"HIT  (rank {res.get('rank')})" if res.get("hit") else "MISS"
-        print(f"[{idx:2d}/{len(cases):2d}] [{mod:5s}] {case['id']:30s} -> {status} (fusion={res.get('fusion')})")
+        print(
+            f"[{idx:2d}/{len(cases):2d}] [{mod:5s}] {case['id']:30s} -> {status} (fusion={res.get('fusion')})"
+        )
 
     out_path = Path(args.output)
-    out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"\nĐã ghi kết quả ra {out_path.resolve()}")
     print("Tóm tắt Hit@5:")
     for mod in ("text", "table", "image"):

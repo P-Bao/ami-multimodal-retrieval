@@ -71,7 +71,9 @@ class VinterOcrClient:
     # ------------------------------------------------------------------
     # HTTP
     # ------------------------------------------------------------------
-    async def _post_ocr(self, file_bytes: bytes, filename: str, mode: str, pages: Any) -> dict:
+    async def _post_ocr(
+        self, file_bytes: bytes, filename: str, mode: str, pages: Any
+    ) -> dict:
         url = f"{self._base_url}/v1/ocr"
         data: dict[str, str] = {"mode": mode}
         if pages:
@@ -87,12 +89,18 @@ class VinterOcrClient:
         for attempt in range(self._retries + 1):
             try:
                 if self._http_client is not None:
-                    response = await self._http_client.post(url, files=files, data=data, headers=headers)
+                    response = await self._http_client.post(
+                        url, files=files, data=data, headers=headers
+                    )
                 else:
                     async with httpx.AsyncClient(timeout=self._timeout) as client:
-                        response = await client.post(url, files=files, data=data, headers=headers)
+                        response = await client.post(
+                            url, files=files, data=data, headers=headers
+                        )
             except httpx.HTTPError as exc:
-                last_error = OcrFallbackError(f"{_describe_http_error(exc)}: {type(exc).__name__}: {exc}")
+                last_error = OcrFallbackError(
+                    f"{_describe_http_error(exc)}: {type(exc).__name__}: {exc}"
+                )
                 if attempt == self._retries:
                     raise last_error from exc
             else:
@@ -100,7 +108,9 @@ class VinterOcrClient:
                     try:
                         return response.json()
                     except ValueError as exc:
-                        raise OcrFallbackError("OCR fallback trả response không phải JSON") from exc
+                        raise OcrFallbackError(
+                            "OCR fallback trả response không phải JSON"
+                        ) from exc
                 last_error = OcrFallbackError(
                     f"OCR fallback trả mã lỗi {response.status_code}: {response.text[:300]}"
                 )
@@ -118,9 +128,13 @@ class VinterOcrClient:
         """GET /health - không raise, trả ``{}`` khi lỗi (chỉ để kiểm tra/log)."""
         try:
             if self._http_client is not None:
-                response = await self._http_client.get(f"{self._base_url}/health", timeout=5)
+                response = await self._http_client.get(
+                    f"{self._base_url}/health", timeout=5
+                )
             else:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(5, connect=5)) as client:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(5, connect=5)
+                ) as client:
                     response = await client.get(f"{self._base_url}/health")
             if response.status_code == 200:
                 data = response.json()
@@ -129,7 +143,9 @@ class VinterOcrClient:
             pass
         return {}
 
-    async def ocr_text(self, file_bytes: bytes, filename: str = "document.pdf", *, pages=None) -> str:
+    async def ocr_text(
+        self, file_bytes: bytes, filename: str = "document.pdf", *, pages=None
+    ) -> str:
         """OCR text toàn bộ file (PDF/ảnh). Gộp ``page_texts`` theo thứ tự trang,
         fallback về field ``text`` khi thiếu. Text rỗng -> ``OcrFallbackError``."""
         data = await self._post_ocr(file_bytes, filename, "text", pages)
@@ -153,7 +169,9 @@ class VinterOcrClient:
             raise OcrFallbackError("OCR fallback không trích xuất được text nào")
         return text
 
-    async def ocr_tables(self, file_bytes: bytes, filename: str = "document.pdf", *, pages=None) -> list[dict]:
+    async def ocr_tables(
+        self, file_bytes: bytes, filename: str = "document.pdf", *, pages=None
+    ) -> list[dict]:
         """OCR bảng -> ``[{"page": int | None, "html": str}]`` (bỏ item html rỗng).
 
         Không có bảng / lỗi -> caller tự xử lý (extract_tables trả ``[]`` khi cả

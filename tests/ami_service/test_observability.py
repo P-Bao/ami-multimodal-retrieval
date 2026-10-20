@@ -34,8 +34,13 @@ async def test_search_records_request_metrics(client):  # noqa: F811
     assert _val("duration_seconds_count", mode="vector") == before["dur"] + 1
     assert _val("docs_returned_count") == before["docs"] + 1
     assert _val("chunks_retrieved_count") == before["chunks"] + 1
-    assert _val("stage_duration_seconds_count", stage="embed_query") == before["embed"] + 1
-    assert _val("stage_duration_seconds_count", stage="vector_search") == before["search"] + 1
+    assert (
+        _val("stage_duration_seconds_count", stage="embed_query") == before["embed"] + 1
+    )
+    assert (
+        _val("stage_duration_seconds_count", stage="vector_search")
+        == before["search"] + 1
+    )
     assert _val("stage_duration_seconds_count", stage="rerank") == before["rerank"] + 1
     assert _val("requests_in_flight") == 0
 
@@ -136,13 +141,13 @@ async def test_metrics_endpoint_exposes_series(client):  # noqa: F811
     assert P + "stage_duration_seconds_bucket" in resp.text
 
 
-I = "multimodal_rag_ingest_"
+INGEST_PREFIX = "multimodal_rag_ingest_"
 PDF_ID = "64b000000000000000000001"
 TEXT_ID = "64b000000000000000000005"
 
 
 def _ival(name: str, **labels) -> float:
-    return REGISTRY.get_sample_value(I + name, labels or None) or 0.0
+    return REGISTRY.get_sample_value(INGEST_PREFIX + name, labels or None) or 0.0
 
 
 def _ingest_worker(runner, docs_repo, state_repo, queue, asset_store, max_delivery=3):
@@ -194,7 +199,9 @@ async def test_ingest_skipped_event(
         fake_pipeline, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
     )
     before = _ival("events_total", event="created", result="skipped")
-    await worker._process_message("1-1", RagEvent(event="created", document_id="missing-doc"))
+    await worker._process_message(
+        "1-1", RagEvent(event="created", document_id="missing-doc")
+    )
     assert _ival("events_total", event="created", result="skipped") == before + 1
     assert _ival("in_flight") == 0
 
@@ -260,7 +267,8 @@ async def test_ingest_gauges_updated_and_errors_swallowed(
 
 
 async def test_ingest_embed_items_and_cache_hits(
-    pipeline, fake_status_store  # noqa: F811
+    pipeline,  # noqa: F811
+    fake_status_store,
 ):
     fake_status_store.ensure_pending(TEXT_ID)
     before_items = _ival("embed_items_total")
@@ -272,7 +280,9 @@ async def test_ingest_embed_items_and_cache_hits(
     chunk_count = fake_status_store.get(TEXT_ID)["chunk_count"]
     assert chunk_count > 0
     assert _ival("embed_items_total") == before_items + chunk_count
-    assert _ival("embed_cache_hits_total") == before_hits  # FakeEmbedder.count_cache_hits -> 0
+    assert (
+        _ival("embed_cache_hits_total") == before_hits
+    )  # FakeEmbedder.count_cache_hits -> 0
 
 
 async def test_ingest_embed_failure_reason(pipeline, fake_status_store):  # noqa: F811
@@ -319,7 +329,9 @@ def test_set_documents_env_toggle(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="ami_rag.observability"):
         obs.RetrievalTracker(span, time.perf_counter()).set_documents([doc])
         on = caplog.records[-1]
-        assert on.documents == [{"text": "nội dung tài liệu", "score": 0.5, "metadata": {}}]
+        assert on.documents == [
+            {"text": "nội dung tài liệu", "score": 0.5, "metadata": {}}
+        ]
         assert on.trace_id
 
         monkeypatch.setenv("TRACE_OUTPUT_DOCUMENTS", "0")
@@ -331,7 +343,11 @@ def test_set_documents_env_toggle(monkeypatch, caplog):
 
 
 def test_normalize_otlp_traces_url():
-    for raw in ("http://tempo:4318", "http://tempo:4318/", "http://tempo:4318/v1/traces"):
+    for raw in (
+        "http://tempo:4318",
+        "http://tempo:4318/",
+        "http://tempo:4318/v1/traces",
+    ):
         assert obs.normalize_otlp_traces_url(raw) == "http://tempo:4318/v1/traces"
 
 
@@ -349,7 +365,9 @@ def test_dashboard_metrics_exist_in_code():
     exported = set()
     for fam in REGISTRY.collect():
         exported.add(fam.name)
-        exported.update(fam.name + sfx for sfx in ("_total", "_bucket", "_count", "_sum"))
+        exported.update(
+            fam.name + sfx for sfx in ("_total", "_bucket", "_count", "_sum")
+        )
     used = set(re.findall(r"multimodal_rag_(?:retrieval|ingest)_[a-z_]+", text))
     assert used, "dashboard uses no metrics"
     missing = {u for u in used if u not in exported}
@@ -364,7 +382,9 @@ def test_alert_rule_metrics_exist_in_code():
     exported = set()
     for fam in REGISTRY.collect():
         exported.add(fam.name)
-        exported.update(fam.name + sfx for sfx in ("_total", "_bucket", "_count", "_sum"))
+        exported.update(
+            fam.name + sfx for sfx in ("_total", "_bucket", "_count", "_sum")
+        )
     used = set(re.findall(r"multimodal_rag_(?:retrieval|ingest)_[a-z_]+", text))
     assert used, "alert rules use no metrics"
     missing = {u for u in used if u not in exported}

@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 class QueryMixin:
     """QueryMixin (không LightRAG)."""
 
-    async def aquery(self, query: str, system_prompt: str | None = None, **kwargs) -> str:
+    async def aquery(
+        self, query: str, system_prompt: str | None = None, **kwargs
+    ) -> str:
         """Pure text query - gọi answer_func (llm_model_func) trực tiếp."""
         llm = getattr(self, "llm_model_func", None)
         if llm is None:
-            raise ValueError(
-                "llm_model_func must be provided to answer queries"
-            )
+            raise ValueError("llm_model_func must be provided to answer queries")
         callback_manager = getattr(self, "callback_manager", None)
         query_start_time = time.time()
         if callback_manager is not None:
@@ -60,9 +60,7 @@ class QueryMixin:
         vector_store = getattr(self, "vector_store", None)
         collection = getattr(self, "collection", "")
         if embedder is None or vector_store is None:
-            raise ValueError(
-                "embedder + vector_store must be provided for aquery_data"
-            )
+            raise ValueError("embedder + vector_store must be provided for aquery_data")
         vector = await embedder.embed_query(query)
         hits = await vector_store.search(collection, vector, top_k or 5)
         return {

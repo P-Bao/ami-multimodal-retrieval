@@ -91,9 +91,7 @@ class OpenAIEmbedder(BaseRemoteEmbedder):
         if resp.status_code in (401, 403):
             raise EmbedAuthError(f"embed server từ chối token: {resp.status_code}")
         if resp.status_code != 200:
-            raise EmbedServerUnreachable(
-                f"embed server /health trả {resp.status_code}"
-            )
+            raise EmbedServerUnreachable(f"embed server /health trả {resp.status_code}")
         try:
             info = resp.json()
         except ValueError:
@@ -140,7 +138,9 @@ class OpenAIEmbedder(BaseRemoteEmbedder):
     # ------------------------------------------------------------------
     # Hooks cho BaseRemoteEmbedder.embed_documents
     # ------------------------------------------------------------------
-    async def _post_embed(self, items: list[dict], *, input_type: str = "document") -> dict:
+    async def _post_embed(
+        self, items: list[dict], *, input_type: str = "document"
+    ) -> dict:
         return await self._post(
             f"{self.base_url}/v1/embeddings",
             {"input": items, "input_type": input_type},
@@ -180,9 +180,7 @@ class OpenAIEmbedder(BaseRemoteEmbedder):
             )
         for idx, item in zip(batch_indices, data):
             if not item.get("embedding"):
-                raise EmbedderError(
-                    "embed server trả response /v1/embeddings rỗng"
-                )
+                raise EmbedderError("embed server trả response /v1/embeddings rỗng")
             vectors[idx] = item["embedding"]
 
 

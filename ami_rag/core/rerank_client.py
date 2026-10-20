@@ -49,7 +49,9 @@ def build_rerank_model_func(settings: Settings | None = None):
     settings = settings or get_settings()
     base_url = settings.RERANK_BASE_URL.rstrip("/")
 
-    async def rerank_model_func(query: str, documents: list[str], top_n: int | None = None, **_):
+    async def rerank_model_func(
+        query: str, documents: list[str], top_n: int | None = None, **_
+    ):
         """Giữ trả [{"index": i, "relevance_score": s}] như cũ:
         - documents ≤ MAX_DOCUMENTS_PER_REQ: 1 POST như cũ (response {scores}
           hoặc {scores, ranked_indices}).
@@ -66,7 +68,7 @@ def build_rerank_model_func(settings: Settings | None = None):
         all_scores = [0.0] * len(documents)
         async with httpx.AsyncClient(timeout=settings.RERANK_TIMEOUT) as client:
             for start in range(0, len(documents), MAX_DOCUMENTS_PER_REQ):
-                batch = documents[start:start + MAX_DOCUMENTS_PER_REQ]
+                batch = documents[start : start + MAX_DOCUMENTS_PER_REQ]
                 payload = {"query": query, "documents": batch, "top_k": len(batch)}
                 resp = await client.post(f"{base_url}/rerank", json=payload)
                 resp.raise_for_status()
@@ -79,7 +81,9 @@ def build_rerank_model_func(settings: Settings | None = None):
                 if len(scores) < len(batch):
                     logger.warning(
                         "rerank server trả %d/%d scores cho batch @%d",
-                        len(scores), len(batch), start,
+                        len(scores),
+                        len(batch),
+                        start,
                     )
                 for j, s in enumerate(scores):
                     all_scores[start + j] = float(s)
@@ -102,7 +106,9 @@ def build_vllm_rerank_func(settings: Settings | None = None):
     base_url = settings.RERANK_BASE_URL.rstrip("/")
     model = settings.RERANK_MODEL
 
-    async def rerank_func(query: str, documents: list[str | dict], top_n: int | None = None, **_):
+    async def rerank_func(
+        query: str, documents: list[str | dict], top_n: int | None = None, **_
+    ):
         payload = {
             "model": model,
             "query": query,
@@ -119,7 +125,10 @@ def build_vllm_rerank_func(settings: Settings | None = None):
             idx = item.get("index")
             if isinstance(idx, int):
                 results.append(
-                    {"index": idx, "relevance_score": float(item.get("relevance_score") or 0.0)}
+                    {
+                        "index": idx,
+                        "relevance_score": float(item.get("relevance_score") or 0.0),
+                    }
                 )
         return results
 
@@ -147,11 +156,15 @@ async def build_rerank_documents(
         return []
 
     settings = get_settings()
-    max_tokens = max_input_tokens if max_input_tokens is not None else (
-        getattr(settings, "RERANK_MAX_INPUT_TOKENS", 6000)
+    max_tokens = (
+        max_input_tokens
+        if max_input_tokens is not None
+        else (getattr(settings, "RERANK_MAX_INPUT_TOKENS", 6000))
     )
-    img_reserve = image_token_reserve if image_token_reserve is not None else (
-        getattr(settings, "RERANK_IMAGE_TOKEN_RESERVE", 1792)
+    img_reserve = (
+        image_token_reserve
+        if image_token_reserve is not None
+        else (getattr(settings, "RERANK_IMAGE_TOKEN_RESERVE", 1792))
     )
 
     data_uris: dict[int, str] = {}

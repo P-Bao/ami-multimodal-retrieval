@@ -27,6 +27,7 @@ def compute_mdhash_id(content, prefix: str = "id-") -> str:
         content = json.dumps(content, ensure_ascii=False, sort_keys=True)
     return f"{prefix}{hashlib.md5(str(content).encode()).hexdigest()}"
 
+
 # Import prompt templates
 from raganything.prompt import PROMPTS
 from raganything.utils import (
@@ -709,6 +710,7 @@ class BaseModalProcessor:
     def _fix_json_escapes(self, json_str: str) -> str:
         """Legacy method - now handled by progressive strategies"""
         return self._progressive_quote_fix(json_str)
+
 
 class ImageModalProcessor(BaseModalProcessor):
     """Processor specialized for image content"""

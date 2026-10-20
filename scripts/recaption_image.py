@@ -41,7 +41,9 @@ async def _materialize(asset_store, item: str, temp_dir: str) -> str:
     data = await asyncio.to_thread(asset_store.get_bytes, item)
     if not data:
         raise RuntimeError(f"không đọc được ảnh từ MinIO: {item}")
-    name = hashlib.sha1(item.encode()).hexdigest()[:12] + VectorPipeline._image_ext(data, item)
+    name = hashlib.sha1(item.encode()).hexdigest()[:12] + VectorPipeline._image_ext(
+        data, item
+    )
     path = Path(temp_dir) / name
     await asyncio.to_thread(path.write_bytes, data)
     return str(path)
@@ -85,12 +87,16 @@ async def run(args: argparse.Namespace) -> None:
             return
 
     mode = resolve_image_describe_mode(settings)
-    print(f"doc {doc_id} | chế độ caption: {mode} | "
-          f"ngôn ngữ: {settings.CAPTION_LLM_LANGUAGE or '(prompt gốc)'} | "
-          f"model: {settings.CAPTION_LLM_MODEL} | ảnh: {len(images)}")
+    print(
+        f"doc {doc_id} | chế độ caption: {mode} | "
+        f"ngôn ngữ: {settings.CAPTION_LLM_LANGUAGE or '(prompt gốc)'} | "
+        f"model: {settings.CAPTION_LLM_MODEL} | ảnh: {len(images)}"
+    )
     if mode == "none":
-        print("IMAGE_DESCRIBE_MODE=none -> không có caption func; hãy đặt CAPTION_LLM_API_KEY "
-              "hoặc QWEN_VLM_MODEL")
+        print(
+            "IMAGE_DESCRIBE_MODE=none -> không có caption func; hãy đặt CAPTION_LLM_API_KEY "
+            "hoặc QWEN_VLM_MODEL"
+        )
         return
 
     saved: list[str] = []
@@ -115,7 +121,9 @@ async def run(args: argparse.Namespace) -> None:
     with tempfile.TemporaryDirectory(prefix="ami-recaption-") as tmp:
         for idx, item in images:
             if not item.get("asset_key"):
-                print(f"  idx={idx} page={item.get('page_idx')}: bỏ qua (không có asset_key)")
+                print(
+                    f"  idx={idx} page={item.get('page_idx')}: bỏ qua (không có asset_key)"
+                )
                 continue
             item = dict(item)
             item["img_path"] = await _materialize(asset_store, item["asset_key"], tmp)
@@ -132,7 +140,11 @@ async def run(args: argparse.Namespace) -> None:
             if args.prompt_only:
                 from raganything.modalprocessors import PROMPTS
 
-                ctx = proc._get_context_for_item(info) if hasattr(proc, "_get_context_for_item") else ""
+                ctx = (
+                    proc._get_context_for_item(info)
+                    if hasattr(proc, "_get_context_for_item")
+                    else ""
+                )
                 base = (
                     PROMPTS["vision_prompt_with_context"].format(
                         context=ctx or "(none)",
@@ -153,39 +165,60 @@ async def run(args: argparse.Namespace) -> None:
                 )
                 extra = ""
                 if language:
-                    extra += PROMPTS["vision_prompt_language_note"].format(language=language)
+                    extra += PROMPTS["vision_prompt_language_note"].format(
+                        language=language
+                    )
                 if title:
-                    extra += PROMPTS["vision_prompt_doc_title_note"].format(doc_title=title)
+                    extra += PROMPTS["vision_prompt_doc_title_note"].format(
+                        doc_title=title
+                    )
                 print("--- prompt (chưa gọi API) ---")
                 print(base + extra)
                 continue
 
             sections = await proc.generate_chunk_sections(
-                modal_content=item, content_type="image", item_info=info, entity_name=None
+                modal_content=item,
+                content_type="image",
+                item_info=info,
+                entity_name=None,
             )
             desc = str(sections[0]["description"]) if sections else ""
-            chunk_text = with_title(
-                _format_modal_chunk("image", item, desc), title
-            )
+            chunk_text = with_title(_format_modal_chunk("image", item, desc), title)
             print(f"--- description ({len(desc)} ký tự) ---")
             print(desc[:PREVIEW] + ("…" if len(desc) > PREVIEW else ""))
             print(f"--- chunk content sẽ ghi vào Qdrant ({len(chunk_text)} ký tự) ---")
-            print(chunk_text[: PREVIEW + 100] + ("…" if len(chunk_text) > PREVIEW + 100 else ""))
+            print(
+                chunk_text[: PREVIEW + 100]
+                + ("…" if len(chunk_text) > PREVIEW + 100 else "")
+            )
             saved.append(chunk_text)
 
     args._saved = "\n\n---\n\n".join(saved)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sinh thử caption ảnh, không đụng index")
+    parser = argparse.ArgumentParser(
+        description="Sinh thử caption ảnh, không đụng index"
+    )
     parser.add_argument("--doc", required=True, help="doc id (Mongo ObjectId)")
     parser.add_argument("--page", type=int, help="chỉ ảnh ở trang này")
     parser.add_argument("--index", type=int, help="chỉ ảnh ở index content_list này")
-    parser.add_argument("--list", action="store_true", help="liệt kê ảnh của doc, không gọi LLM")
-    parser.add_argument("--prompt-only", action="store_true", help="in prompt, không gọi API")
-    parser.add_argument("--out", help="ghi description sinh được ra file (để so sánh/đo lại)")
+    parser.add_argument(
+        "--list", action="store_true", help="liệt kê ảnh của doc, không gọi LLM"
+    )
+    parser.add_argument(
+        "--prompt-only", action="store_true", help="in prompt, không gọi API"
+    )
+    parser.add_argument(
+        "--out", help="ghi description sinh được ra file (để so sánh/đo lại)"
+    )
     args = parser.parse_args()
-    if args.page is None and args.index is None and not args.list and not args.prompt_only:
+    if (
+        args.page is None
+        and args.index is None
+        and not args.list
+        and not args.prompt_only
+    ):
         parser.error("cần --list, --page, --index hoặc --prompt-only")
     asyncio.run(run(args))
     if args.out and getattr(args, "_saved", None):

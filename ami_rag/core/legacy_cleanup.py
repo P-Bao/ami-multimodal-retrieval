@@ -79,7 +79,9 @@ def is_stale_model_collection(name: str, workspace: str, current_name: str) -> b
     return name.startswith(f"{workspace}__") and name != current_name
 
 
-def find_stale_model_collections(client, workspace: str, current_name: str) -> list[LegacyTarget]:
+def find_stale_model_collections(
+    client, workspace: str, current_name: str
+) -> list[LegacyTarget]:
     """Liệt kê collection Qdrant của embed model/version cũ (không phải hiện tại)."""
     targets: list[LegacyTarget] = []
     names = [c.name for c in client.get_collections().collections]

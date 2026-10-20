@@ -54,7 +54,12 @@ def _add_crawl_doc(fake_docs_repo, fake_status_store):
 
 @pytest.fixture
 def pipeline(
-    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo, fake_modal_processors
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_docs_repo,
+    fake_modal_processors,
 ):
     settings = Settings(
         _env_file=None,
@@ -87,7 +92,9 @@ def _seed_pending(fake_status_store):
     fake_status_store.ensure_pending(PDF_ID)
 
 
-async def test_full_run_mongo_text(pipeline, fake_status_store, fake_vector_store, fake_asset_store):
+async def test_full_run_mongo_text(
+    pipeline, fake_status_store, fake_vector_store, fake_asset_store
+):
     outcome = await pipeline.run(TEXT_ID)
 
     assert outcome.ok and outcome.stage == "indexed"
@@ -156,7 +163,9 @@ async def test_resume_from_embed_builds_chunks_when_missing(
     chunk_count = fake_status_store.get(TEXT_ID)["chunk_count"]
 
     # xoá chunks.json -> resume từ embed phải build lại từ content_list+descriptions
-    fake_asset_store.json_objects.pop(ArtifactPaths.chunks_key(fake_asset_store, TEXT_ID), None)
+    fake_asset_store.json_objects.pop(
+        ArtifactPaths.chunks_key(fake_asset_store, TEXT_ID), None
+    )
     await fake_vector_store.delete_by_doc(pipeline.collection, TEXT_ID)
 
     outcome = await pipeline.run(TEXT_ID, from_stage="embed")
@@ -290,9 +299,12 @@ async def test_parse_failure_increments_parse_failures_metric(
     )
     outcome = await pipeline.run(TEXT_ID, from_stage="parse")
     assert not outcome.ok
-    assert _ingest_val(
-        "multimodal_rag_ingest_parse_failures_total", document_type="unknown"
-    ) == before + 1
+    assert (
+        _ingest_val(
+            "multimodal_rag_ingest_parse_failures_total", document_type="unknown"
+        )
+        == before + 1
+    )
 
 
 async def test_vector_store_error_marks_failed(
@@ -648,7 +660,10 @@ def test_build_chunks_flushes_around_image_keeps_order(pipeline):
 def test_build_chunks_prefix_doc_title(pipeline):
     content_list = [{"type": "text", "text": "- Địa chỉ: Tầng 1 nhà A1", "page_idx": 0}]
     chunks = pipeline._build_chunks(
-        "doc_test", content_list, descriptions=[], doc_title="PHÒNG CHÍNH TRỊ VÀ CÔNG TÁC SINH VIÊN"
+        "doc_test",
+        content_list,
+        descriptions=[],
+        doc_title="PHÒNG CHÍNH TRỊ VÀ CÔNG TÁC SINH VIÊN",
     )
     assert chunks[0].content == (
         "PHÒNG CHÍNH TRỊ VÀ CÔNG TÁC SINH VIÊN\n- Địa chỉ: Tầng 1 nhà A1"
@@ -657,7 +672,9 @@ def test_build_chunks_prefix_doc_title(pipeline):
 
 
 def test_build_chunks_no_title_prefix_when_chunk_already_starts_with_title(pipeline):
-    content_list = [{"type": "text", "text": "# Sơ đồ cơ cấu tổ chức\nNội dung", "page_idx": 0}]
+    content_list = [
+        {"type": "text", "text": "# Sơ đồ cơ cấu tổ chức\nNội dung", "page_idx": 0}
+    ]
     chunks = pipeline._build_chunks(
         "doc_test", content_list, descriptions=[], doc_title="Sơ đồ cơ cấu tổ chức"
     )
@@ -674,7 +691,12 @@ def test_build_chunks_prefix_title_on_image_chunk(pipeline):
 
 
 async def test_stage_parse_backend_data_rebuild(
-    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo, monkeypatch
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_docs_repo,
+    monkeypatch,
 ):
     settings = Settings(
         _env_file=None,
@@ -716,14 +738,21 @@ async def test_stage_parse_backend_data_rebuild(
     assert outcome.ok and outcome.stage == "indexed"
     assert calls["rebuild"] == 1
     saved = fake_asset_store.load_content_list(PDF_ID)
-    assert [{k: v for k, v in i.items() if k != "asset_key"} for i in saved] == rebuilt_list
+    assert [
+        {k: v for k, v in i.items() if k != "asset_key"} for i in saved
+    ] == rebuilt_list
     # asset chỉ upload cho ảnh (text/table MinerU đã bị thay)
     assert fake_asset_store.calls.count(("upload_assets", PDF_ID)) == 1
     assert saved[2]["asset_key"] == f"rag-assets/{PDF_ID}/img2.png"
 
 
 async def test_stage_parse_backend_data_failure_falls_back_to_mineru(
-    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo, monkeypatch
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_docs_repo,
+    monkeypatch,
 ):
     settings = Settings(
         _env_file=None,
@@ -777,7 +806,9 @@ async def test_prepare_embed_items_caption_only_keeps_modal_content(
     from ami_rag.core.vector_pipeline import Chunk
 
     chunks = [
-        Chunk(id="c1", content="text", modality="text", page_idx=0, is_multimodal=False),
+        Chunk(
+            id="c1", content="text", modality="text", page_idx=0, is_multimodal=False
+        ),
         Chunk(
             id="c2",
             content="[Table Content]",
@@ -888,14 +919,26 @@ async def test_stage_embed_sparse_empty_dict_to_none(
 # Describe ảnh: materialize MinIO -> img_path + caption func (Gemini/vision)
 # ----------------------------------------------------------------------
 
-def _image_content_list(asset_key="rag-assets/docX/img0.png", caption=None, footnotes=None, page=0):
-    item = {"type": "image", "img_path": "gone.png", "asset_key": asset_key, "page_idx": page}
+
+def _image_content_list(
+    asset_key="rag-assets/docX/img0.png", caption=None, footnotes=None, page=0
+):
+    item = {
+        "type": "image",
+        "img_path": "gone.png",
+        "asset_key": asset_key,
+        "page_idx": page,
+    }
     if caption:
         item["image_caption"] = [caption]
     if footnotes:
         item["image_footnote"] = [footnotes]
     return [
-        {"type": "text", "text": "Cơ cấu tổ chức của Học viện gồm các phòng ban.", "page_idx": page},
+        {
+            "type": "text",
+            "text": "Cơ cấu tổ chức của Học viện gồm các phòng ban.",
+            "page_idx": page,
+        },
         item,
     ]
 
@@ -932,7 +975,15 @@ class _FakeCaptionFunc:
         self._active = 0
         self.max_active = 0
 
-    async def __call__(self, prompt, system_prompt=None, history_messages=None, image_data=None, messages=None, **kwargs):
+    async def __call__(
+        self,
+        prompt,
+        system_prompt=None,
+        history_messages=None,
+        image_data=None,
+        messages=None,
+        **kwargs,
+    ):
         self._active += 1
         self.max_active = max(self.max_active, self._active)
         try:
@@ -946,7 +997,9 @@ class _FakeCaptionFunc:
             self._active -= 1
 
 
-def _make_pipeline(fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, **settings_kw):
+def _make_pipeline(
+    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, **settings_kw
+):
     return VectorPipeline(
         _describe_settings(**settings_kw),
         embedder=fake_embedder,
@@ -971,16 +1024,28 @@ def _real_image_processor(caption_func, chunk_size=64):
 
 def test_resolve_image_describe_mode():
     # auto: có CAPTION_LLM_API_KEY -> gemini
-    assert resolve_image_describe_mode(_describe_settings(CAPTION_LLM_API_KEY="k")) == "gemini"
+    assert (
+        resolve_image_describe_mode(_describe_settings(CAPTION_LLM_API_KEY="k"))
+        == "gemini"
+    )
     # auto: không key nhưng có QWEN_VLM_MODEL -> vision
-    assert resolve_image_describe_mode(_describe_settings(QWEN_VLM_MODEL="Qwen/Qwen3-VL")) == "vision"
+    assert (
+        resolve_image_describe_mode(_describe_settings(QWEN_VLM_MODEL="Qwen/Qwen3-VL"))
+        == "vision"
+    )
     # auto: thiếu cả hai -> none (text thô, không LLM)
     assert resolve_image_describe_mode(_describe_settings()) == "none"
     # giá trị rõ được dùng luôn
     for mode in ("gemini", "vision", "none"):
-        assert resolve_image_describe_mode(_describe_settings(IMAGE_DESCRIBE_MODE=mode)) == mode
+        assert (
+            resolve_image_describe_mode(_describe_settings(IMAGE_DESCRIBE_MODE=mode))
+            == mode
+        )
     # legacy "text" (path OCR-ảnh đã xoá) -> "none"
-    assert resolve_image_describe_mode(_describe_settings(IMAGE_DESCRIBE_MODE="text")) == "none"
+    assert (
+        resolve_image_describe_mode(_describe_settings(IMAGE_DESCRIBE_MODE="text"))
+        == "none"
+    )
     with pytest.raises(ValueError):
         resolve_image_describe_mode(_describe_settings(IMAGE_DESCRIBE_MODE="bogus"))
 
@@ -991,7 +1056,10 @@ async def test_describe_image_via_real_image_processor(
     """Materialize MinIO -> img_path thật -> ImageModalProcessor THẬT gửi đúng base64."""
     caption = _FakeCaptionFunc()
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
@@ -1020,12 +1088,18 @@ async def test_describe_image_prompt_includes_language_and_doc_title(
     """Prompt caption phải có chỉ dẫn ngôn ngữ + tiêu đề doc (mô tả khớp corpus)."""
     caption = _FakeCaptionFunc()
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
-        IMAGE_DESCRIBE_MODE="gemini", CAPTION_LLM_LANGUAGE="vi",
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
+        IMAGE_DESCRIBE_MODE="gemini",
+        CAPTION_LLM_LANGUAGE="vi",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
 
-    await pipeline._stage_describe("docX", _image_content_list(), "Sổ tay sinh viên 2026")
+    await pipeline._stage_describe(
+        "docX", _image_content_list(), "Sổ tay sinh viên 2026"
+    )
 
     prompt = caption.calls[0][0]
     assert "Write the whole response in vi." in prompt
@@ -1043,8 +1117,12 @@ async def test_describe_image_prompt_without_language_when_blank(
     """CAPTION_LLM_LANGUAGE rỗng -> prompt giữ nguyên, không chèn chỉ dẫn."""
     caption = _FakeCaptionFunc()
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
-        IMAGE_DESCRIBE_MODE="gemini", CAPTION_LLM_LANGUAGE="",
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
+        IMAGE_DESCRIBE_MODE="gemini",
+        CAPTION_LLM_LANGUAGE="",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
 
@@ -1056,14 +1134,18 @@ async def test_describe_image_prompt_without_language_when_blank(
 
 
 def test_format_image_chunk_drops_empty_summary_line(pipeline):
-    """"Tóm tắt: Không có" là nhiễu -> bỏ hẳn khi không có caption."""
+    """ "Tóm tắt: Không có" là nhiễu -> bỏ hẳn khi không có caption."""
     from ami_rag.core.vector_pipeline import _format_modal_chunk
 
     item = {"type": "image", "image_caption": [], "image_footnote": []}
     assert _format_modal_chunk("image", item, "Mô tả sơ đồ") == (
         "[Image Content]\nMô tả sơ đồ"
     )
-    item2 = {"type": "image", "image_caption": ["Sơ đồ tổ chức"], "image_footnote": ["Ghi chú"]}
+    item2 = {
+        "type": "image",
+        "image_caption": ["Sơ đồ tổ chức"],
+        "image_footnote": ["Ghi chú"],
+    }
     assert _format_modal_chunk("image", item2, "Mô tả") == (
         "[Image Content]\nMô tả\nTóm tắt: Sơ đồ tổ chức\nGhi chú"
     )
@@ -1076,7 +1158,9 @@ def test_format_table_chunk_without_description_has_no_empty_line():
     item = {"type": "table", "table_body": "<table><tr><td>TT</td></tr></table>"}
     out = _format_modal_chunk("table", item, "")
     assert "Mô tả:" not in out
-    assert out == "[Table Content]\nCaption: Không có\n<table><tr><td>TT</td></tr></table>"
+    assert (
+        out == "[Table Content]\nCaption: Không có\n<table><tr><td>TT</td></tr></table>"
+    )
 
 
 def test_build_chunks_drops_dict_repr_description(pipeline):
@@ -1104,7 +1188,12 @@ def test_build_chunks_skips_modal_item_without_any_text(pipeline):
     """Item MinerU thiếu table_body và không caption/mô tả -> bỏ chunk rác."""
     content_list = [
         {"type": "text", "text": "Nội dung trang", "page_idx": 0},
-        {"type": "table", "table_type": "simple_table", "page_idx": 17, "bbox": {"top": 1}},
+        {
+            "type": "table",
+            "table_type": "simple_table",
+            "page_idx": 17,
+            "bbox": {"top": 1},
+        },
     ]
     chunks = pipeline._build_chunks("doc_test", content_list, descriptions=[])
     assert [c.modality for c in chunks] == ["text"]
@@ -1119,15 +1208,24 @@ async def test_describe_item_table_dict_repr_falls_back_to_body(
         def set_content_source(self, content_source, content_format="auto"):
             pass
 
-        async def generate_chunk_sections(self, modal_content, content_type, item_info=None, entity_name=None):
+        async def generate_chunk_sections(
+            self, modal_content, content_type, item_info=None, entity_name=None
+        ):
             return [{"description": str(modal_content), "entity_info": {}}]
 
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
     )
     pipeline.modal_processors = {"table": _DictReprProc()}
-    item = {"type": "table", "table_body": "<table><tr><td>TT</td></tr></table>", "page_idx": 7}
+    item = {
+        "type": "table",
+        "table_body": "<table><tr><td>TT</td></tr></table>",
+        "page_idx": 7,
+    }
 
     out = await pipeline._describe_item("table", item, [item], 0, "docX")
     assert out == "<table><tr><td>TT</td></tr></table>"
@@ -1143,13 +1241,20 @@ async def test_describe_image_temp_dir_cleaned_after_stage(
         def set_content_source(self, content_source, content_format="auto"):
             pass
 
-        async def generate_chunk_sections(self, modal_content, content_type, item_info=None, entity_name=None):
+        async def generate_chunk_sections(
+            self, modal_content, content_type, item_info=None, entity_name=None
+        ):
             path = modal_content.get("img_path")
             seen.append((path, Path(path).exists()))
-            return [{"description": "mô tả image", "entity_info": {}, "window_meta": None}]
+            return [
+                {"description": "mô tả image", "entity_info": {}, "window_meta": None}
+            ]
 
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
     )
     pipeline.modal_processors = {"image": _ProbeProc()}
@@ -1171,7 +1276,10 @@ async def test_describe_image_mode_none_raw_text(
     """mode none: text thô caption + footnotes + ngữ cảnh; KHÔNG gọi caption func / fetch MinIO."""
     caption = _FakeCaptionFunc()
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="none",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
@@ -1185,11 +1293,16 @@ async def test_describe_image_mode_none_raw_text(
 
     fake_asset_store.get_bytes = _spy
 
-    content_list = _image_content_list(caption="Sơ đồ tổ chức PTIT", footnotes="Nguồn: PTIT")
+    content_list = _image_content_list(
+        caption="Sơ đồ tổ chức PTIT", footnotes="Nguồn: PTIT"
+    )
     descriptions = await pipeline._stage_describe("docX", content_list)
 
     text = descriptions[0]["description"]
-    assert text == "Sơ đồ tổ chức PTIT\nNguồn: PTIT\nCơ cấu tổ chức của Học viện gồm các phòng ban."
+    assert (
+        text
+        == "Sơ đồ tổ chức PTIT\nNguồn: PTIT\nCơ cấu tổ chức của Học viện gồm các phòng ban."
+    )
     assert caption.calls == []
     assert fetched == []
 
@@ -1200,7 +1313,10 @@ async def test_describe_image_caption_func_fails_falls_back_to_raw(
     """Caption func raise -> processor nuốt lỗi (trả dict repr) -> phát hiện -> text thô, không crash."""
     caption = _FakeCaptionFunc(fail=True)
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
@@ -1221,7 +1337,10 @@ async def test_describe_image_missing_asset_key_keeps_original(
     """Ảnh thiếu asset_key -> không materialize -> img_path cũ hỏng -> text thô, không crash."""
     caption = _FakeCaptionFunc()
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
@@ -1241,14 +1360,22 @@ async def test_describe_caption_concurrency_limited(
 ):
     caption = _FakeCaptionFunc(delay=0.01)
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
         CAPTION_LLM_MAX_CONCURRENCY=2,
     )
     pipeline.modal_processors = {"image": _real_image_processor(caption)}
 
     content_list = [
-        {"type": "image", "img_path": "gone.png", "asset_key": f"rag-assets/docX/img{i}.png", "page_idx": 0}
+        {
+            "type": "image",
+            "img_path": "gone.png",
+            "asset_key": f"rag-assets/docX/img{i}.png",
+            "page_idx": 0,
+        }
         for i in range(5)
     ]
     descriptions = await pipeline._stage_describe("docX", content_list)
@@ -1268,10 +1395,14 @@ async def test_describe_sets_content_source_on_processors(
         def set_content_source(self, content_source, content_format="auto"):
             self.sources.append((content_source, content_format))
 
-        async def generate_chunk_sections(self, modal_content, content_type, item_info=None, entity_name=None):
+        async def generate_chunk_sections(
+            self, modal_content, content_type, item_info=None, entity_name=None
+        ):
             return [{"description": "desc", "entity_info": {}, "window_meta": None}]
 
-    pipeline = _make_pipeline(fake_embedder, fake_vector_store, fake_asset_store, fake_status_store)
+    pipeline = _make_pipeline(
+        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store
+    )
     proc = _RecProc()
     pipeline.modal_processors = {"image": proc, "table": proc}
 
@@ -1283,10 +1414,17 @@ async def test_describe_sets_content_source_on_processors(
 
 
 async def test_describe_vision_mode_uses_processor(
-    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_modal_processors
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_modal_processors,
 ):
     pipeline = _make_pipeline(
-        fake_embedder, fake_vector_store, fake_asset_store, fake_status_store,
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
         QWEN_VLM_MODEL="Qwen/Qwen3-VL",  # auto -> vision
     )
     pipeline.modal_processors = fake_modal_processors
@@ -1303,5 +1441,3 @@ async def test_describe_vision_mode_uses_processor(
     img_item = img_calls[0][1]
     assert img_item["img_path"] != "gone.png", "materialize phải gán img_path temp"
     assert not Path(img_item["img_path"]).exists(), "temp dir xoá sau stage"
-
-

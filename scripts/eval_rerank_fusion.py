@@ -138,14 +138,18 @@ async def retrieve(pipeline, rerank_func, query: str, top_k: int) -> list[dict]:
         getattr(settings, "RERANK_MULTIMODAL", True)
         and resolve_rerank_backend(settings) == "vllm"
     )
-    documents = await build_rerank_documents(chunks, pipeline.asset_store, multimodal=multimodal)
+    documents = await build_rerank_documents(
+        chunks, pipeline.asset_store, multimodal=multimodal
+    )
     results = await rerank_func(query=query, documents=documents, top_n=len(documents))
 
     scored: list[dict] = []
     for item in results or []:
         idx = item.get("index")
         if isinstance(idx, int) and 0 <= idx < len(chunks):
-            scored.append({"chunk": chunks[idx], "raw": float(item.get("relevance_score") or 0.0)})
+            scored.append(
+                {"chunk": chunks[idx], "raw": float(item.get("relevance_score") or 0.0)}
+            )
     return scored
 
 
@@ -202,7 +206,9 @@ def evaluate(cases: list[dict], runs: list[dict]) -> dict:
     report: dict = {"groups": {}, "overall": {}, "paired": {}, "distributions": {}}
     groups = sorted({c["modality"] for c in cases})
 
-    for scope, subset in [("overall", cases)] + [(g, [c for c in cases if c["modality"] == g]) for g in groups]:
+    for scope, subset in [("overall", cases)] + [
+        (g, [c for c in cases if c["modality"] == g]) for g in groups
+    ]:
         entry: dict = {"n_cases": len(subset)}
         if len(subset) < 10:
             entry["warning"] = f"n={len(subset)} < 10: số liệu không đủ tin cậy"
@@ -233,7 +239,11 @@ def evaluate(cases: list[dict], runs: list[dict]) -> dict:
     report["paired"] = paired
 
     for group in groups + ["overall"]:
-        subset = cases if group == "overall" else [c for c in cases if c["modality"] == group]
+        subset = (
+            cases
+            if group == "overall"
+            else [c for c in cases if c["modality"] == group]
+        )
         rel: dict[bool, list[float]] = {True: [], False: []}
         for case in subset:
             for s in case["scored"]:
@@ -291,7 +301,9 @@ async def main_async(args: argparse.Namespace) -> None:
 
     pipeline = await get_pipeline()
     rerank_func = build_rerank_func(get_settings())
-    print(f"collection: {pipeline.collection} | rerank backend: {resolve_rerank_backend(get_settings())}")
+    print(
+        f"collection: {pipeline.collection} | rerank backend: {resolve_rerank_backend(get_settings())}"
+    )
 
     default_params = {
         "rrf_k": args.rrf_k,
@@ -309,12 +321,16 @@ async def main_async(args: argparse.Namespace) -> None:
 
     # 1 lần retrieve mỗi query: embed + search + rerank full scores
     for case in cases:
-        case["scored"] = await retrieve(pipeline, rerank_func, case["query"], args.top_k)
+        case["scored"] = await retrieve(
+            pipeline, rerank_func, case["query"], args.top_k
+        )
 
     runs: list[dict] = []
     raw_ranks: dict[str, int | None] = {}
     for case in cases:
-        raw_ranks[case["query"]] = rank_of_targets(raw_ranking(case["scored"]), case["targets"])
+        raw_ranks[case["query"]] = rank_of_targets(
+            raw_ranking(case["scored"]), case["targets"]
+        )
     runs.append({"name": "raw", "ranks": raw_ranks})
 
     all_reports = []
@@ -370,7 +386,9 @@ def main() -> None:
     parser.add_argument("--visual-floor", type=float, default=0.01)
     parser.add_argument("--text-floor", type=float, default=0.05)
     parser.add_argument("--sweep", action="store_true", help="quét weight x rrf_k")
-    parser.add_argument("--skip-xfail", action="store_true", help="bỏ qua các case đánh dấu xfail")
+    parser.add_argument(
+        "--skip-xfail", action="store_true", help="bỏ qua các case đánh dấu xfail"
+    )
     parser.add_argument("--output", help="ghi kết quả JSON ra file")
     args = parser.parse_args()
     asyncio.run(main_async(args))

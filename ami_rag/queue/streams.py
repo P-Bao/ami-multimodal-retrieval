@@ -34,7 +34,9 @@ class RagStreamQueue:
 
     async def ensure_group(self) -> None:
         try:
-            await self._redis.xgroup_create(self._stream, self._group, id="0", mkstream=True)
+            await self._redis.xgroup_create(
+                self._stream, self._group, id="0", mkstream=True
+            )
         except Exception as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
@@ -61,7 +63,9 @@ class RagStreamQueue:
                 batch.append((message_id, event))
         return batch
 
-    async def read_batch(self, count: int = 10, block_ms: int = 5000) -> list[tuple[str, RagEvent]]:
+    async def read_batch(
+        self, count: int = 10, block_ms: int = 5000
+    ) -> list[tuple[str, RagEvent]]:
         stale = await self._claim_stale(count)
         if stale:
             return stale

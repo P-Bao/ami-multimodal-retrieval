@@ -74,7 +74,9 @@ def doc_link_fields(doc: dict) -> dict:
     fields: dict = {}
     doc_id = doc.get("_id")
     if doc_id is not None and ObjectId.is_valid(str(doc_id)):
-        fields["document_oid"] = doc_id if isinstance(doc_id, ObjectId) else ObjectId(str(doc_id))
+        fields["document_oid"] = (
+            doc_id if isinstance(doc_id, ObjectId) else ObjectId(str(doc_id))
+        )
     for key in ("organization_unit_id", "owner_id", "document_type", "title"):
         if doc.get(key) is not None:
             fields[key] = doc[key]

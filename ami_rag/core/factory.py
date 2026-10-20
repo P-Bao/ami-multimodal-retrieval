@@ -132,7 +132,9 @@ def _build_caption_func(settings: Settings) -> Callable | None:
     return gemini_caption
 
 
-def _build_modal_processors(settings: Settings, caption_func: Callable | None = None) -> dict:
+def _build_modal_processors(
+    settings: Settings, caption_func: Callable | None = None
+) -> dict:
     """Modal processors cho describe stage (lightrag=None tolerant).
 
     ``caption_func`` (inject cho test) thắng; không có thì Gemini caption

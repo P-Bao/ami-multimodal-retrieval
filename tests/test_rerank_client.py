@@ -3,6 +3,7 @@
 Phủ: parse response hai backend, payload (model/top_n), dispatcher theo
 RERANK_BACKEND, build_rerank_documents multimodal (ảnh từ asset store, fallback text).
 """
+
 import json
 
 import httpx
@@ -205,7 +206,9 @@ async def test_legacy_100_docs_single_post(monkeypatch):
     results = await func("q", docs, top_n=100)
     assert len(server.requests) == 1
     assert server.requests[0]["top_k"] == 100
-    assert [r["index"] for r in results] == sorted(range(100), key=lambda i: -_mock_score(i))
+    assert [r["index"] for r in results] == sorted(
+        range(100), key=lambda i: -_mock_score(i)
+    )
 
 
 async def test_vllm_func_maps_results(monkeypatch):
@@ -345,12 +348,12 @@ async def test_build_rerank_documents_truncates_oversize_text():
 
 def _chunks_for_fusion() -> list[dict]:
     return [
-        {"modality": "text"},   # idx 0
+        {"modality": "text"},  # idx 0
         {"modality": "image"},  # idx 1
         {"modality": "table"},  # idx 2 (cùng nhóm text)
         {"modality": "image"},  # idx 3
-        {"modality": "text"},   # idx 4
-        {},                     # idx 5 (thiếu modality -> text)
+        {"modality": "text"},  # idx 4
+        {},  # idx 5 (thiếu modality -> text)
     ]
 
 

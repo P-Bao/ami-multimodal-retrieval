@@ -39,7 +39,10 @@ def test_source_hash_minio_parse_depends_on_object_key_only():
 
 def test_resolve_file_path_upload_crawl_and_fallback():
     upload = {"_id": DOC_ID, "file_path": "documents/HV/abc_file.pdf"}
-    crawl = {"_id": DOC_ID, "metadata": {"source_url": "https://ptit.edu.vn/tin/thong-bao-1"}}
+    crawl = {
+        "_id": DOC_ID,
+        "metadata": {"source_url": "https://ptit.edu.vn/tin/thong-bao-1"},
+    }
     text = {"_id": DOC_ID, "document_type": "text"}
     assert resolve_file_path(upload) == f"{DOC_ID}_abc_file.pdf"
     assert resolve_file_path(crawl) == f"{DOC_ID}_thong-bao-1"

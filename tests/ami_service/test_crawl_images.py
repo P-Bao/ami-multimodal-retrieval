@@ -138,8 +138,7 @@ def test_collect_image_urls_metadata_markdown_and_bullets():
     doc = {
         "metadata": {"images": [{"url": "https://x.com/m.png"}, "https://x.com/n.jpg"]},
         "content": (
-            "![inline](https://x.com/inline.png)\n\n"
-            "- https://x.com/bullet.jpg\n"
+            "![inline](https://x.com/inline.png)\n\n" "- https://x.com/bullet.jpg\n"
         ),
     }
     urls = worker.collect_image_urls(doc)
@@ -273,8 +272,16 @@ def test_classify_crawl_error_reasons():
 
     request = httpx.Request("GET", "https://x.com/a.jpg")
     response = httpx.Response(404, request=request)
-    assert _classify_crawl_error(httpx.HTTPStatusError("404", request=request, response=response)) == "http"
-    assert _classify_crawl_error(httpx.TooManyRedirects("loop", request=None)) == "redirect"
+    assert (
+        _classify_crawl_error(
+            httpx.HTTPStatusError("404", request=request, response=response)
+        )
+        == "http"
+    )
+    assert (
+        _classify_crawl_error(httpx.TooManyRedirects("loop", request=None))
+        == "redirect"
+    )
     assert _classify_crawl_error(httpx.ConnectError("refused")) == "connect"
     assert _classify_crawl_error(httpx.ConnectTimeout("timed out")) == "connect"
     assert _classify_crawl_error(ssl.SSLError("cert")) == "ssl"

@@ -37,7 +37,8 @@ class EmbeddingCache:
             for key, vec in mapping.items()
         ]
         self._conn.executemany(
-            "INSERT OR REPLACE INTO embeddings (key, dim, vector) VALUES (?, ?, ?)", rows
+            "INSERT OR REPLACE INTO embeddings (key, dim, vector) VALUES (?, ?, ?)",
+            rows,
         )
         self._conn.commit()
 
@@ -47,9 +48,7 @@ class EmbeddingCache:
     def delete_by_prefix(self, prefix: str) -> int:
         """Xoá mọi entry có key bắt đầu bằng `prefix` (ví dụ `f"{model}|"`);
         trả về số entry đã xoá. Wildcard `%`/`_` trong prefix được escape."""
-        escaped = (
-            prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        )
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cur = self._conn.execute(
             "DELETE FROM embeddings WHERE key LIKE ? ESCAPE '\\'", (escaped + "%",)
         )

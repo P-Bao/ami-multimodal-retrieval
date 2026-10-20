@@ -4,6 +4,7 @@ Phủ: handshake (model/dim lệch -> dừng), retry đúng lỗi tạm thời /
 chia batch theo số item và byte payload, kiểm tra từng response (đổi model giữa
 chừng), circuit breaker, cache, timeout/mất kết nối.
 """
+
 import json
 
 import httpx
@@ -228,7 +229,9 @@ async def test_response_model_change_detected_mid_stream():
         if request.url.path == "/embed":
             if len(server.requests) == 0:
                 server.requests.append([])
-                return httpx.Response(200, json=_embed_body([{"text": "a"}], model_name=MODEL))
+                return httpx.Response(
+                    200, json=_embed_body([{"text": "a"}], model_name=MODEL)
+                )
             # Các request sau: server đã bị đổi model
             return httpx.Response(
                 200, json=_embed_body([{"text": "b"}], model_name="other-model")
@@ -334,15 +337,19 @@ async def test_cache_isolates_text_with_and_without_image(tmp_path):
     server.requests.clear()
 
     # Re-embed both -> both hit cache, 0 network requests
-    hits = embedder.count_cache_hits([
-        "same text",
-        {"text": "same text", "image_b64": "aW1n"},
-    ])
+    hits = embedder.count_cache_hits(
+        [
+            "same text",
+            {"text": "same text", "image_b64": "aW1n"},
+        ]
+    )
     assert hits == 2
-    await embedder.embed_documents([
-        "same text",
-        {"text": "same text", "image_b64": "aW1n"},
-    ])
+    await embedder.embed_documents(
+        [
+            "same text",
+            {"text": "same text", "image_b64": "aW1n"},
+        ]
+    )
     assert len(server.requests) == 0
 
 
@@ -365,4 +372,3 @@ async def test_embed_documents_truncates_multimodal_with_image_reserve():
     # budget (300 - 100) * 3 chars/token; ảnh giữ nguyên
     assert item["image_b64"] == "aW1n"
     assert item["text"] == "b" * 600
-

@@ -4,6 +4,7 @@ Phủ: handshake (/health + probe model/dim), batch input giữ thứ tự, payl
 {"text", "image"}, retry đúng lỗi tạm thời / không retry 4xx, kiểm tra response
 (đổi model giữa chừng), circuit breaker, cache, input_type query.
 """
+
 import base64
 
 import httpx
@@ -59,7 +60,9 @@ class FakeServer:
             )
         if path == "/v1/embeddings":
             body = __import__("json").loads(request.content.decode())
-            items = body["input"] if isinstance(body["input"], list) else [body["input"]]
+            items = (
+                body["input"] if isinstance(body["input"], list) else [body["input"]]
+            )
             # probe của verify(): không ghi, không tiêu fail_next
             if (
                 len(items) == 1
@@ -76,7 +79,8 @@ class FakeServer:
                     raise first
                 return httpx.Response(first, json={"detail": f"fake {first}"})
             return httpx.Response(
-                200, json=_embed_body(len(items), model_name=self.model_name, dim=self.dim)
+                200,
+                json=_embed_body(len(items), model_name=self.model_name, dim=self.dim),
             )
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -239,9 +243,7 @@ async def test_response_model_change_detected_mid_stream():
     def switching(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/embeddings" and len(server.requests) >= 1:
             # Các request sau request đầu: server đã bị đổi model
-            return httpx.Response(
-                200, json=_embed_body(1, model_name="other-model")
-            )
+            return httpx.Response(200, json=_embed_body(1, model_name="other-model"))
         return server.handler(request)
 
     embedder = OpenAIEmbedder(
@@ -274,7 +276,9 @@ async def test_cache_only_sends_misses(tmp_path):
     server.requests.clear()
     await embedder.embed_documents(["doc a", "doc c"])
     assert len(server.requests) == 1
-    assert [i if isinstance(i, str) else i["text"] for i in server.requests[0]] == ["doc c"]
+    assert [i if isinstance(i, str) else i["text"] for i in server.requests[0]] == [
+        "doc c"
+    ]
 
 
 async def test_embed_query_uses_query_input_type():
@@ -347,4 +351,6 @@ async def test_clamp_floor_prevents_degenerate_short_text():
     # budget rất nhỏ bị floor 256 chars (chống text degenerate khi embed)
     assert clamp_embed_text("a" * 1000, 10) == "a" * 256
     # kèm ảnh trừ hết budget -> vẫn floor 256
-    assert clamp_embed_text("a" * 1000, 50, has_image=True, image_tokens=50) == "a" * 256
+    assert (
+        clamp_embed_text("a" * 1000, 50, has_image=True, image_tokens=50) == "a" * 256
+    )

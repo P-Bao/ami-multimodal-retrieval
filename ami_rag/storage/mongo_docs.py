@@ -11,7 +11,9 @@ class MongoDocumentRepo:
     belong to the backend docs service alone.
     """
 
-    def __init__(self, mongo_uri: str, db_name: str, collection_name: str = "documents"):
+    def __init__(
+        self, mongo_uri: str, db_name: str, collection_name: str = "documents"
+    ):
         self._client: MongoClient = MongoClient(mongo_uri, tz_aware=True)
         self._col = self._client[db_name][collection_name]
 

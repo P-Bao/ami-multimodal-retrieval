@@ -130,9 +130,7 @@ def split_image_section(text: str) -> tuple[list[str], str]:
             i += 1
     if not urls:
         return [], text
-    kept = "\n".join(
-        ln for k, ln in enumerate(lines) if k not in remove
-    ).rstrip()
+    kept = "\n".join(ln for k, ln in enumerate(lines) if k not in remove).rstrip()
     return urls, kept
 
 
@@ -164,7 +162,9 @@ def _classify_crawl_error(exc: Exception) -> str:
 
     from minio.error import S3Error
 
-    if isinstance(exc, ssl.SSLError) or isinstance(getattr(exc, "__cause__", None), ssl.SSLError):
+    if isinstance(exc, ssl.SSLError) or isinstance(
+        getattr(exc, "__cause__", None), ssl.SSLError
+    ):
         return "ssl"
     if isinstance(exc, httpx.TooManyRedirects):
         return "redirect"
@@ -241,9 +241,8 @@ class CrawlImageWorker:
         current_url = url
         for _ in range(10):
             parsed = urlparse(current_url)
-            trusted = (
-                parsed.scheme == "https"
-                and _is_trusted_no_ssl_host(parsed.hostname)
+            trusted = parsed.scheme == "https" and _is_trusted_no_ssl_host(
+                parsed.hostname
             )
             with httpx.Client(
                 timeout=self._timeout,

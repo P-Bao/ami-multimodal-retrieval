@@ -64,10 +64,17 @@ class SearchHit:
 
 
 class VectorStore(Protocol):
-    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None: ...
+    async def ensure_collection(
+        self, name: str, dim: int, *, sparse: bool = True
+    ) -> None: ...
     async def upsert(self, collection: str, chunks: list[ChunkRecord]) -> None: ...
     async def search(
-        self, collection: str, vector: list[float], top_k: int, *, sparse: dict | None = None
+        self,
+        collection: str,
+        vector: list[float],
+        top_k: int,
+        *,
+        sparse: dict | None = None,
     ) -> list[SearchHit]: ...
     async def delete_by_doc(self, collection: str, doc_id: str) -> int: ...
     async def count(self, collection: str, doc_id: str | None = None) -> int: ...
@@ -89,12 +96,18 @@ class QdrantVectorStore:
         self._url = url
         # cache: collection đã named-vectors ("dense"+"sparse") hay legacy vô danh
         self._named: dict[str, bool] = {}
-        self._client = client if client is not None else QdrantClient(url=url, api_key=api_key or None)
+        self._client = (
+            client
+            if client is not None
+            else QdrantClient(url=url, api_key=api_key or None)
+        )
         # Giới hạn byte ước lượng mỗi request upsert (server mặc định 32 MB);
         # batch được đóng gói theo byte VÀ số điểm để không vượt giới hạn.
         self.max_request_bytes = max_request_bytes
 
-    async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None:
+    async def ensure_collection(
+        self, name: str, dim: int, *, sparse: bool = True
+    ) -> None:
         """Tạo collection nếu thiếu; kiểm tra tương thích dim với collection có sẵn.
 
         sparse=True (hybrid): collection mới dùng named vectors "dense" (COSINE)
@@ -106,7 +119,11 @@ class QdrantVectorStore:
         try:
             existing = await asyncio.to_thread(
                 lambda: next(
-                    (c.name for c in self._client.get_collections().collections if c.name == name),
+                    (
+                        c.name
+                        for c in self._client.get_collections().collections
+                        if c.name == name
+                    ),
                     None,
                 )
             )
@@ -122,7 +139,11 @@ class QdrantVectorStore:
                             f"collection '{name}' có dim={size} nhưng cấu hình là {dim}. "
                             "Đổi EMBED_DIM/EMBED_MODEL hoặc chuyển sang collection mới."
                         )
-                    if sparse and (info.config.params.sparse_vectors or {}).get("sparse") is None:
+                    if (
+                        sparse
+                        and (info.config.params.sparse_vectors or {}).get("sparse")
+                        is None
+                    ):
                         raise VectorStoreError(
                             f"collection '{name}' thiếu sparse vector 'sparse' "
                             "— reindex cần tạo collection mới."
@@ -149,7 +170,9 @@ class QdrantVectorStore:
                     self._client.create_collection,
                     collection_name=name,
                     vectors_config={
-                        "dense": models.VectorParams(size=dim, distance=models.Distance.COSINE)
+                        "dense": models.VectorParams(
+                            size=dim, distance=models.Distance.COSINE
+                        )
                     },
                     sparse_vectors_config={"sparse": models.SparseVectorParams()},
                 )
@@ -157,9 +180,13 @@ class QdrantVectorStore:
                 await asyncio.to_thread(
                     self._client.create_collection,
                     collection_name=name,
-                    vectors_config=models.VectorParams(size=dim, distance=models.Distance.COSINE),
+                    vectors_config=models.VectorParams(
+                        size=dim, distance=models.Distance.COSINE
+                    ),
                 )
-            logger.info("tạo Qdrant collection %s (dim=%s, sparse=%s)", name, dim, sparse)
+            logger.info(
+                "tạo Qdrant collection %s (dim=%s, sparse=%s)", name, dim, sparse
+            )
         except VectorStoreError:
             raise
         except Exception as exc:
@@ -176,7 +203,11 @@ class QdrantVectorStore:
 
         if not chunks:
             return
-        limit = max_request_bytes if max_request_bytes is not None else self.max_request_bytes
+        limit = (
+            max_request_bytes
+            if max_request_bytes is not None
+            else self.max_request_bytes
+        )
         points = []
         for c in chunks:
             vector: dict = {"dense": c.vector}
@@ -203,9 +234,7 @@ class QdrantVectorStore:
         except Exception as exc:
             raise VectorStoreError(f"Qdrant {self._url}: {exc}") from exc
 
-    def _pack_batches(
-        self, points: list, batch_size: int, limit: int
-    ) -> list[list]:
+    def _pack_batches(self, points: list, batch_size: int, limit: int) -> list[list]:
         """Đóng gói batch theo số điểm VÀ byte ước lượng (payload JSON + vector).
 
         Point đơn vượt limit vẫn được gửi riêng (Qdrant giới hạn theo request,
@@ -216,9 +245,7 @@ class QdrantVectorStore:
         current_bytes = 0
         for p in points:
             est = _point_estimate(p)
-            if current and (
-                len(current) >= batch_size or current_bytes + est > limit
-            ):
+            if current and (len(current) >= batch_size or current_bytes + est > limit):
                 batches.append(current)
                 current = []
                 current_bytes = 0
@@ -248,7 +275,12 @@ class QdrantVectorStore:
         return named
 
     async def search(
-        self, collection: str, vector: list[float], top_k: int, *, sparse: dict | None = None
+        self,
+        collection: str,
+        vector: list[float],
+        top_k: int,
+        *,
+        sparse: dict | None = None,
     ) -> list[SearchHit]:
         from qdrant_client.http import models
 
@@ -299,7 +331,9 @@ class QdrantVectorStore:
             MatchValue,
         )
 
-        filter_ = Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))])
+        filter_ = Filter(
+            must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+        )
         await asyncio.to_thread(
             self._client.delete,
             collection_name=collection,
@@ -316,6 +350,9 @@ class QdrantVectorStore:
             else None
         )
         result = await asyncio.to_thread(
-            self._client.count, collection_name=collection, count_filter=count_filter, exact=True
+            self._client.count,
+            collection_name=collection,
+            count_filter=count_filter,
+            exact=True,
         )
         return int(result.count)

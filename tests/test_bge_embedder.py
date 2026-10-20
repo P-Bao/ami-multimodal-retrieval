@@ -5,6 +5,7 @@ tăng dần int + values float), caption-only bỏ image_b64, text rỗng -> "."
 đúng lỗi tạm thời / không retry 4xx, circuit breaker, cache (chỉ dense),
 return_sparse=False → sparse {}.
 """
+
 import base64
 import json
 
@@ -31,9 +32,7 @@ def _embed_body(n_items: int, dim: int = 8, *, sparse: bool = True) -> dict:
     body: dict = {"dense_vecs": [_vec(i, dim) for i in range(n_items)]}
     if sparse:
         # token_id dạng khoá chuỗi (như server trả) — thứ tự xoá trộn để test sort
-        body["sparse_weights"] = [
-            {"200": 0.3, "100": 0.25} for _ in range(n_items)
-        ]
+        body["sparse_weights"] = [{"200": 0.3, "100": 0.25} for _ in range(n_items)]
     return body
 
 
@@ -102,10 +101,7 @@ async def test_handshake_ok_sets_model_dim_and_instruction_ns():
     # instruction_ns = sha256(model)[:16]
     import hashlib
 
-    assert (
-        embedder._instruction_ns
-        == hashlib.sha256(MODEL.encode()).hexdigest()[:16]
-    )
+    assert embedder._instruction_ns == hashlib.sha256(MODEL.encode()).hexdigest()[:16]
 
 
 async def test_handshake_model_mismatch_stops():

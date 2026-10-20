@@ -201,7 +201,9 @@ async def test_rebuild_pdf_content_list_full_pipeline(tmp_path, monkeypatch):
 
     def fake_post(self, endpoint, file_bytes, filename, content_type):
         if "qwen" in endpoint:
-            return {"tables": [{"html": "<table><tr><td>q</td></tr></table>", "page": 1}]}
+            return {
+                "tables": [{"html": "<table><tr><td>q</td></tr></table>", "page": 1}]
+            }
         return {"text": "", "content": {"text": "ocr fallback", "children": []}}
 
     monkeypatch.setattr(BackendDataExtractor, "_post_file", fake_post)

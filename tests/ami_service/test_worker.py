@@ -12,7 +12,13 @@ TXT_ID = "64b000000000000000000006"
 
 
 @pytest.fixture
-def runner(fake_embedder, fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo):
+def runner(
+    fake_embedder,
+    fake_vector_store,
+    fake_asset_store,
+    fake_status_store,
+    fake_docs_repo,
+):
     from ami_rag.core.vector_pipeline import VectorPipeline
     from ami_rag.settings import Settings
 
@@ -39,7 +45,9 @@ def runner(fake_embedder, fake_vector_store, fake_asset_store, fake_status_store
     )
 
 
-def _worker(runner, fake_docs_repo, fake_status_store, fake_queue, asset_store, max_delivery=3):
+def _worker(
+    runner, fake_docs_repo, fake_status_store, fake_queue, asset_store, max_delivery=3
+):
     class _S:
         WORKER_MAX_DELIVERY = max_delivery
         WORKER_BATCH = 10
@@ -60,9 +68,16 @@ def _worker(runner, fake_docs_repo, fake_status_store, fake_queue, asset_store, 
 
 
 async def test_created_event_runs_pipeline_and_indexes(
-    runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store, fake_vector_store
+    runner,
+    fake_docs_repo,
+    fake_status_store,
+    fake_queue,
+    fake_asset_store,
+    fake_vector_store,
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     result = await worker.handle_event(RagEvent(event="created", document_id=TEXT_ID))
 
     assert result is not None
@@ -81,7 +96,9 @@ async def test_created_event_runs_pipeline_and_indexes(
 async def test_minio_parse_fetches_file_and_stores_content_list(
     runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     await worker.handle_event(RagEvent(event="created", document_id=PDF_ID))
 
     assert fake_asset_store.fetched == ["documents/HV/a.pdf"]
@@ -93,19 +110,31 @@ async def test_minio_parse_fetches_file_and_stores_content_list(
 async def test_unchanged_indexed_source_skipped(
     runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     await worker.handle_event(RagEvent(event="created", document_id=TEXT_ID))
     row = fake_status_store.get(TEXT_ID)
 
     # re-deliver cùng event: đã indexed + cùng content_hash -> skip
-    assert await worker.handle_event(RagEvent(event="updated", document_id=TEXT_ID)) is None
+    assert (
+        await worker.handle_event(RagEvent(event="updated", document_id=TEXT_ID))
+        is None
+    )
     assert fake_status_store.get(TEXT_ID) == row
 
 
 async def test_deleted_event_purges_vectors_assets_and_row(
-    runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store, fake_vector_store
+    runner,
+    fake_docs_repo,
+    fake_status_store,
+    fake_queue,
+    fake_asset_store,
+    fake_vector_store,
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     await worker.handle_event(RagEvent(event="created", document_id=TEXT_ID))
     assert fake_vector_store.points
 
@@ -120,7 +149,9 @@ async def test_deleted_event_purges_vectors_assets_and_row(
 async def test_missing_document_skipped(
     runner, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, FakeDocsRepo(), fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, FakeDocsRepo(), fake_status_store, fake_queue, fake_asset_store
+    )
     result = await worker.handle_event(
         RagEvent(event="created", document_id="64b000000000000000000009")
     )
@@ -131,9 +162,14 @@ async def test_missing_document_skipped(
 async def test_empty_text_content_skipped(
     runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     fake_docs_repo.docs[TEXT_ID]["content"] = "   "
-    assert await worker.handle_event(RagEvent(event="created", document_id=TEXT_ID)) is None
+    assert (
+        await worker.handle_event(RagEvent(event="created", document_id=TEXT_ID))
+        is None
+    )
 
 
 async def test_pdf_without_file_path_fails_after_max_delivery(
@@ -159,7 +195,14 @@ async def test_pdf_without_file_path_fails_after_max_delivery(
         docs_repo=fake_docs_repo,
         parser=FakeParser(),
     )
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store, max_delivery=2)
+    worker = _worker(
+        runner,
+        fake_docs_repo,
+        fake_status_store,
+        fake_queue,
+        fake_asset_store,
+        max_delivery=2,
+    )
     event = RagEvent(event="created", document_id=PDF_ID)
     await worker._process_message("1-1", event)
     assert "1-1" not in fake_queue.acked
@@ -178,7 +221,14 @@ async def test_failure_marks_failed_and_retries_until_max_delivery(
         raise RuntimeError("embed down")
 
     runner.run = boom
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store, max_delivery=2)
+    worker = _worker(
+        runner,
+        fake_docs_repo,
+        fake_status_store,
+        fake_queue,
+        fake_asset_store,
+        max_delivery=2,
+    )
     event = RagEvent(event="created", document_id=TEXT_ID)
 
     await worker._process_message("1-1", event)
@@ -194,7 +244,9 @@ async def test_failure_marks_failed_and_retries_until_max_delivery(
 async def test_skipped_event_releases_attempt(
     runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     # unknown document: begin_attempt tạo row, skip phải drop lại
     missing = "64b000000000000000000009"
     await worker._process_message("1-1", RagEvent(event="created", document_id=missing))
@@ -205,7 +257,9 @@ async def test_skipped_event_releases_attempt(
 async def test_worker_passes_mineru_kwargs_to_parse(
     runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
 ):
-    worker = _worker(runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store)
+    worker = _worker(
+        runner, fake_docs_repo, fake_status_store, fake_queue, fake_asset_store
+    )
     await worker.handle_event(RagEvent(event="created", document_id=PDF_ID))
     parses = runner.parser.calls
     assert parses and parses[0][2] == "auto"

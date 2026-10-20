@@ -105,7 +105,9 @@ class BGEM3Embedder(BaseRemoteEmbedder):
             )
 
         # Probe 1 text để chốt dim thực tế (server quyết định, bỏ qua ensure tránh đệ quy)
-        dense, _ = await self._flow(["probe"], use_cache=False, want_sparse=False, ensure=False)
+        dense, _ = await self._flow(
+            ["probe"], use_cache=False, want_sparse=False, ensure=False
+        )
         server_dim = len(dense[0])
         if self.expected_dim is not None and server_dim != self.expected_dim:
             raise EmbedModelMismatch(
@@ -158,7 +160,11 @@ class BGEM3Embedder(BaseRemoteEmbedder):
     # Luồng chính (dùng chung cho dense / sparse / query / documents)
     # ------------------------------------------------------------------
     async def _flow(
-        self, items: list[str | dict], *, use_cache: bool, want_sparse: bool,
+        self,
+        items: list[str | dict],
+        *,
+        use_cache: bool,
+        want_sparse: bool,
         ensure: bool = True,
     ) -> tuple[list[list[float]], list[dict]]:
         if not items:
@@ -181,7 +187,8 @@ class BGEM3Embedder(BaseRemoteEmbedder):
 
         if pending:
             batches = [
-                pending[i : i + self.batch_size] for i in range(0, len(pending), self.batch_size)
+                pending[i : i + self.batch_size]
+                for i in range(0, len(pending), self.batch_size)
             ]
             unreachable: EmbedServerUnreachable | None = None
             for group in self._groups(batches, self.max_concurrency):
@@ -203,9 +210,8 @@ class BGEM3Embedder(BaseRemoteEmbedder):
                     if isinstance(result, BaseException):
                         raise result
                     dense_vecs = result.get("dense_vecs")
-                    if (
-                        not isinstance(dense_vecs, list)
-                        or len(dense_vecs) != len(batch_indices)
+                    if not isinstance(dense_vecs, list) or len(dense_vecs) != len(
+                        batch_indices
                     ):
                         raise EmbedderError(
                             f"embed server trả {len(dense_vecs or [])} vector cho "
@@ -259,9 +265,7 @@ class BGEM3Embedder(BaseRemoteEmbedder):
     # ------------------------------------------------------------------
     # HTTP
     # ------------------------------------------------------------------
-    async def _post_embed(
-        self, texts: list[str], *, return_sparse: bool
-    ) -> dict:
+    async def _post_embed(self, texts: list[str], *, return_sparse: bool) -> dict:
         return await self._post(
             f"{self.base_url}/embed",
             {"texts": texts, "return_dense": True, "return_sparse": return_sparse},
@@ -311,9 +315,7 @@ class BGEM3Embedder(BaseRemoteEmbedder):
     @staticmethod
     def _to_sparse(sparse_weights: dict) -> dict:
         """Token_id (khoá str|int) -> weight: indices tang dần + values tương ứng."""
-        pairs = sorted(
-            (int(k), float(v)) for k, v in (sparse_weights or {}).items()
-        )
+        pairs = sorted((int(k), float(v)) for k, v in (sparse_weights or {}).items())
         return {
             "indices": [i for i, _ in pairs],
             "values": [v for _, v in pairs],

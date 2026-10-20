@@ -62,15 +62,15 @@ def test_resolve_embed_backend_invalid_raises():
 
 def test_resolve_rerank_backend_auto_nemotron_vllm():
     assert (
-        resolve_rerank_backend(
-            NS(RERANK_MODEL="nvidia/llama-nemotron-rerank-vl-1b-v2")
-        )
+        resolve_rerank_backend(NS(RERANK_MODEL="nvidia/llama-nemotron-rerank-vl-1b-v2"))
         == "vllm"
     )
 
 
 def test_resolve_rerank_backend_auto_bge_legacy():
-    assert resolve_rerank_backend(NS(RERANK_MODEL="BAAI/bge-reranker-v2-m3")) == "legacy"
+    assert (
+        resolve_rerank_backend(NS(RERANK_MODEL="BAAI/bge-reranker-v2-m3")) == "legacy"
+    )
 
 
 def test_resolve_rerank_backend_explicit_legacy():

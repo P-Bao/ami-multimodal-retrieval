@@ -151,7 +151,9 @@ async def _rerank_chunks(
             return scored, "raw"
     except Exception as exc:
         reason = "error"
-        logger.warning("rerank service failed, falling back to unscored chunks: %s", exc)
+        logger.warning(
+            "rerank service failed, falling back to unscored chunks: %s", exc
+        )
     RERANK_FALLBACK_TOTAL.labels(reason=reason).inc()
     return [(chunk, None) for chunk in chunks[:top_n]], "raw"
 
@@ -229,7 +231,9 @@ def _final_top_k(payload: RAGRequest, settings) -> int:
     return payload.top_k or settings.RERANK_TOP_K
 
 
-async def _search(payload: RAGRequest, pipeline, rerank_func, resolver, asset_store=None) -> dict:
+async def _search(
+    payload: RAGRequest, pipeline, rerank_func, resolver, asset_store=None
+) -> dict:
     settings = get_settings()
     query = _last_user_message(payload)
     top_k = _final_top_k(payload, settings)
@@ -283,7 +287,9 @@ async def _run_search(
     chunks = [hit.payload for hit in hits]
     CHUNKS_RETRIEVED.observe(len(chunks))
     candidates = len(chunks)
-    scored, fusion_used = await _rerank_chunks(rerank_func, query, chunks, top_k, asset_store)
+    scored, fusion_used = await _rerank_chunks(
+        rerank_func, query, chunks, top_k, asset_store
+    )
     scored = scored[:top_k]
     documents = await _build_documents(scored, resolver, asset_store)
     references = []
@@ -333,7 +339,9 @@ async def rag_stream(
         yield '{"status": "retrieving"}\n'
         response = await _search(payload, pipeline, rerank_func, resolver, asset_store)
         for doc in response["documents"]:
-            metadata = {k: v for k, v in doc["metadata"].items() if k not in ("page", "source")}
+            metadata = {
+                k: v for k, v in doc["metadata"].items() if k not in ("page", "source")
+            }
             doc_payload = {"text": doc["text"], "metadata": metadata}
             if doc.get("modality") is not None:
                 doc_payload["modality"] = doc["modality"]

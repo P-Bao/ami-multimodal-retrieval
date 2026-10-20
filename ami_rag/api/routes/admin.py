@@ -85,7 +85,9 @@ async def reprocess_failed(
     return {"requeued": requeued}
 
 
-def build_content_blocks(content_list: list[dict], presign=lambda key: None) -> list[dict]:
+def build_content_blocks(
+    content_list: list[dict], presign=lambda key: None
+) -> list[dict]:
     """Normalize a parsed content_list into API blocks (asset_url = presigned asset_key)."""
     blocks = []
     for item in content_list or []:
@@ -155,7 +157,9 @@ async def document_status(document_id: str, state_repo=Depends(get_state_repo)):
         "organization_unit_id": _str_or_none(state.get("organization_unit_id")),
         "owner_id": _str_or_none(state.get("owner_id")),
         "error": state.get("error") or None,
-        "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+        "updated_at": updated_at.isoformat()
+        if hasattr(updated_at, "isoformat")
+        else updated_at,
     }
 
 
@@ -164,7 +168,9 @@ async def document_content(document_id: str, asset_store=Depends(get_asset_store
     content_list = await asyncio.to_thread(asset_store.load_content_list, document_id)
     if content_list is None:
         raise HTTPException(status_code=404, detail="Content not found")
-    blocks = await asyncio.to_thread(build_content_blocks, content_list, asset_store.presign)
+    blocks = await asyncio.to_thread(
+        build_content_blocks, content_list, asset_store.presign
+    )
     return {
         "document_id": document_id,
         "markdown": blocks_to_markdown(blocks),
@@ -196,7 +202,9 @@ async def reindex(
             document_id=str(doc["_id"]),
             content_hash=doc.get("content_hash"),
             document_type=doc.get("document_type"),
-            org_id=str(doc["organization_unit_id"]) if doc.get("organization_unit_id") else None,
+            org_id=str(doc["organization_unit_id"])
+            if doc.get("organization_unit_id")
+            else None,
         )
         await queue.publish(event)
         published += 1

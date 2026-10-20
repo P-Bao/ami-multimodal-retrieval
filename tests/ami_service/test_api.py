@@ -247,7 +247,9 @@ _FUSION_POINTS = {
 _FUSION_SCORES = {0: 0.9, 1: 0.8, 2: 0.14, 3: 0.7, 4: 0.6, 5: 0.13}
 
 
-async def test_fusion_rrf_promotes_image_over_text(client, app, fake_pipeline, monkeypatch):
+async def test_fusion_rrf_promotes_image_over_text(
+    client, app, fake_pipeline, monkeypatch
+):
     monkeypatch.setattr(get_settings(), "RERANK_FUSION", "rrf")
     fake_pipeline.vector_store.points = dict(_FUSION_POINTS)
     rerank_fake = _IndexedRerank(_FUSION_SCORES)
@@ -276,7 +278,9 @@ async def test_fusion_meta_default_raw(client):
 
 async def test_fusion_rrf_failure_falls_back_to_raw(client, app, monkeypatch):
     monkeypatch.setattr(get_settings(), "RERANK_FUSION", "rrf")
-    app.dependency_overrides[rag_routes.get_rerank_func] = lambda: _IndexedRerank({}, fail=True)
+    app.dependency_overrides[rag_routes.get_rerank_func] = lambda: _IndexedRerank(
+        {}, fail=True
+    )
     resp = await client.post("/v2/rag/", json=BODY)
     body = resp.json()
     assert body["meta"]["fusion"] == "raw"
@@ -373,8 +377,12 @@ async def test_artifact_urls_presigned_once_per_doc(client, app):
     """N chunk cùng doc -> presign_doc_images chạy 1 lần, không N lần list MinIO."""
     store = _ImageAssetStore()
     app.dependency_overrides[rag_routes.get_asset_store] = lambda: store
-    docs = (await client.post("/v2/rag/", json={**BODY, "top_k": 10})).json()["documents"]
-    same_doc = [d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000001"]
+    docs = (await client.post("/v2/rag/", json={**BODY, "top_k": 10})).json()[
+        "documents"
+    ]
+    same_doc = [
+        d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000001"
+    ]
     assert len(same_doc) >= 2
     assert store.presign_doc_calls.count("64b000000000000000000001") == 1
 
@@ -485,7 +493,9 @@ async def test_admin_requires_api_key(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "RAG_API_KEY", "secret-key")
     resp = await client.get("/admin/pipeline_status")
     assert resp.status_code == 401
-    resp = await client.get("/admin/pipeline_status", headers={"Authorization": "Bearer wrong"})
+    resp = await client.get(
+        "/admin/pipeline_status", headers={"Authorization": "Bearer wrong"}
+    )
     assert resp.status_code == 401
     resp = await client.get(
         "/admin/pipeline_status", headers={"Authorization": "Bearer secret-key"}
@@ -569,7 +579,10 @@ async def test_admin_document_content(client, fake_asset_store):
     assert resp.status_code == 200
     body = resp.json()
     assert [b["type"] for b in body["blocks"]] == ["text", "image", "table"]
-    assert body["blocks"][1]["asset_url"] == "https://minio/presigned/rag-assets/doc1/i.png"
+    assert (
+        body["blocks"][1]["asset_url"]
+        == "https://minio/presigned/rag-assets/doc1/i.png"
+    )
     assert len(body["tables"]) == 1
     assert body["tables"][0]["table_body"] == "| a | b |"
     assert body["markdown"] == (
@@ -645,4 +658,8 @@ async def test_fewer_candidates_than_top_k_reported_in_meta(client, fake_vector_
         json={"messages": [{"role": "user", "content": "q"}], "top_k": 10},
     )
     meta = resp.json()["meta"]
-    assert meta["requested_top_k"] == 10 and meta["returned"] == 1 and meta["candidates"] == 1
+    assert (
+        meta["requested_top_k"] == 10
+        and meta["returned"] == 1
+        and meta["candidates"] == 1
+    )

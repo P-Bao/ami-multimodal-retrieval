@@ -79,9 +79,7 @@ class RemoteEmbedder(BaseRemoteEmbedder):
         if resp.status_code in (401, 403):
             raise EmbedAuthError(f"embed server từ chối token: {resp.status_code}")
         if resp.status_code != 200:
-            raise EmbedServerUnreachable(
-                f"embed server /info trả {resp.status_code}"
-            )
+            raise EmbedServerUnreachable(f"embed server /info trả {resp.status_code}")
         info = resp.json()
 
         server_model = info.get("model_name")

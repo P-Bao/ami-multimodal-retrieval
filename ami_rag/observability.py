@@ -153,6 +153,7 @@ def embed_failure_reason(exc: BaseException) -> str:
             return reason
     return "other"
 
+
 # --- Ingest worker metrics (prefix multimodal_rag_ingest_) ------------------
 
 _INGEST_BUCKETS = (1, 5, 15, 30, 60, 120, 300, 600, 1200, 1800)
@@ -299,7 +300,9 @@ def _record_request_counters(mode: str) -> None:
     REQUESTS_BY_DAY_HOUR.labels(day=day, hod=hod).inc()
 
 
-def _truncate_documents_json(payload: list[dict[str, Any]], max_chars: int | None = None) -> str:
+def _truncate_documents_json(
+    payload: list[dict[str, Any]], max_chars: int | None = None
+) -> str:
     """Serialise the payload; if over the limit, shrink ``page_content`` but keep valid JSON."""
     limit = _MAX_EVENT_ATTR_CHARS if max_chars is None else max_chars
     docs_json = json.dumps(payload, ensure_ascii=False, default=str)
@@ -408,7 +411,9 @@ def observe_stage(stage: str) -> Iterator[Span]:
         try:
             yield span
         finally:
-            STAGE_DURATION_SECONDS.labels(stage=stage).observe(time.perf_counter() - started)
+            STAGE_DURATION_SECONDS.labels(stage=stage).observe(
+                time.perf_counter() - started
+            )
 
 
 @contextmanager
@@ -419,4 +424,6 @@ def observe_ingest_stage(stage: str) -> Iterator[Span]:
         try:
             yield span
         finally:
-            INGEST_STAGE_DURATION_SECONDS.labels(stage=stage).observe(time.perf_counter() - started)
+            INGEST_STAGE_DURATION_SECONDS.labels(stage=stage).observe(
+                time.perf_counter() - started
+            )

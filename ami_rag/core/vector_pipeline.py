@@ -91,12 +91,20 @@ def _count_by_type(content_list: list[dict]) -> dict:
 
 
 def _page_count(content_list: list[dict]) -> int:
-    pages = [item.get("page_idx", 0) for item in content_list if item.get("page_idx") is not None]
+    pages = [
+        item.get("page_idx", 0)
+        for item in content_list
+        if item.get("page_idx") is not None
+    ]
     return max(pages) + 1 if pages else 0
 
 
 def _normalize_item_type(t: str | None) -> str:
-    return t if t in ("text", "image", "table", "equation", "audio", "video") else "generic"
+    return (
+        t
+        if t in ("text", "image", "table", "equation", "audio", "video")
+        else "generic"
+    )
 
 
 @dataclass
@@ -173,7 +181,10 @@ def _modal_text(item: dict, type_: str) -> str:
     """Text dùng được của item modal (bảng/công thức) — rỗng nghĩa là không index."""
     if type_ == "table":
         return _join_caption(
-            item.get("table_body") or item.get("text") or item.get("table_caption") or ""
+            item.get("table_body")
+            or item.get("text")
+            or item.get("table_caption")
+            or ""
         ).strip()
     if type_ == "equation":
         return _join_caption(item.get("text") or item.get("latex") or "").strip()
@@ -184,7 +195,9 @@ def _format_modal_chunk(type_: str, item: dict, description: str) -> str:
     """Template chunk cho item multimodal (không ghi entity, không gọi LLM)."""
     if type_ == "image":
         captions = _join_caption(item.get("image_caption") or item.get("img_caption"))
-        footnotes = _join_caption(item.get("image_footnote") or item.get("img_footnote"))
+        footnotes = _join_caption(
+            item.get("image_footnote") or item.get("img_footnote")
+        )
         parts = [f"[Image Content]\n{description}"]
         # Không ghi "Tóm tắt: Không có" - ảnh crawl không có caption nên dòng này
         # chỉ là nhiễu cho mọi chunk ảnh.
@@ -427,7 +440,9 @@ class VectorPipeline(PipelineRunner):
         self.asset_store.save_json(key, data)
 
     def _load_descriptions(self, doc_id: str) -> list[dict] | None:
-        stored = self._load_json(ArtifactPaths.descriptions_key(self.asset_store, doc_id))
+        stored = self._load_json(
+            ArtifactPaths.descriptions_key(self.asset_store, doc_id)
+        )
         return stored if isinstance(stored, list) else None
 
     # ------------------------------------------------------------------
@@ -464,7 +479,8 @@ class VectorPipeline(PipelineRunner):
                 )
                 if (
                     self.settings.PARSER == "mineru"
-                    and getattr(self.settings, "PARSE_TEXT_SOURCE", "mineru") == "backend_data"
+                    and getattr(self.settings, "PARSE_TEXT_SOURCE", "mineru")
+                    == "backend_data"
                 ):
                     content_list = await self._rebuild_backend_data(
                         doc_id, content_list, local
@@ -482,7 +498,9 @@ class VectorPipeline(PipelineRunner):
         for item_type, n in counts.items():
             INGEST_ITEMS_TOTAL.labels(modality=_normalize_item_type(item_type)).inc(n)
         INGEST_PAGES_TOTAL.inc(page_count)
-        await asyncio.to_thread(self.asset_store.save_content_list, doc_id, content_list)
+        await asyncio.to_thread(
+            self.asset_store.save_content_list, doc_id, content_list
+        )
         self.store.mark_stage(
             doc_id,
             STAGE_PARSE,
@@ -499,7 +517,9 @@ class VectorPipeline(PipelineRunner):
             organization_unit_id=doc.get("organization_unit_id"),
             owner_id=doc.get("owner_id"),
         )
-        return IntermediateDoc(doc_id=doc_id, content_list=content_list, file_path=file_path)
+        return IntermediateDoc(
+            doc_id=doc_id, content_list=content_list, file_path=file_path
+        )
 
     def _get_bd_extractor(self):
         from raganything.backend_data_extract import create_extractor
@@ -639,7 +659,8 @@ class VectorPipeline(PipelineRunner):
         multimodal_indices = [
             i
             for i, item in enumerate(content_list)
-            if item.get("type") in ("image", "table", "equation", "audio", "video", "generic")
+            if item.get("type")
+            in ("image", "table", "equation", "audio", "video", "generic")
         ]
         if not multimodal_indices:
             self._save_json(
@@ -661,6 +682,7 @@ class VectorPipeline(PipelineRunner):
             content_list, multimodal_indices
         )
         try:
+
             async def _one(i: int) -> dict:
                 item = describe_items[i]
                 type_ = _normalize_item_type(item.get("type"))
@@ -726,12 +748,12 @@ class VectorPipeline(PipelineRunner):
         rỗng từng ảnh -> bỏ qua ảnh đó (không crash cả stage).
         """
         mode = resolve_image_describe_mode(self.settings)
-        if mode not in ("gemini", "vision") or not hasattr(self.asset_store, "get_bytes"):
+        if mode not in ("gemini", "vision") or not hasattr(
+            self.asset_store, "get_bytes"
+        ):
             return content_list, None
 
-        image_indices = [
-            i for i in indices if content_list[i].get("type") == "image"
-        ]
+        image_indices = [i for i in indices if content_list[i].get("type") == "image"]
         keys: list[str] = []
         seen: set[str] = set()
         for i in image_indices:
@@ -750,11 +772,15 @@ class VectorPipeline(PipelineRunner):
                 try:
                     data = await asyncio.to_thread(self.asset_store.get_bytes, key)
                 except Exception as exc:
-                    logger.warning("fetch ảnh %s lỗi (bỏ qua materialize): %s", key, exc)
+                    logger.warning(
+                        "fetch ảnh %s lỗi (bỏ qua materialize): %s", key, exc
+                    )
                     return key, None
             if not data:
                 return key, None
-            name = hashlib.sha1(key.encode()).hexdigest()[:12] + self._image_ext(data, key)
+            name = hashlib.sha1(key.encode()).hexdigest()[:12] + self._image_ext(
+                data, key
+            )
             path = Path(temp_dir.name) / name
             try:
                 await asyncio.to_thread(path.write_bytes, data)
@@ -815,8 +841,8 @@ class VectorPipeline(PipelineRunner):
             mode = resolve_image_describe_mode(self.settings)
             if mode == "none":
                 return self._describe_image_raw(item, content_list, index)
-            processor = (
-                self.modal_processors.get("image") or self.modal_processors.get("generic")
+            processor = self.modal_processors.get("image") or self.modal_processors.get(
+                "generic"
             )
             if processor is None:
                 return self._describe_image_raw(item, content_list, index)
@@ -826,7 +852,9 @@ class VectorPipeline(PipelineRunner):
                     sections = await processor.generate_chunk_sections(
                         modal_content=item,
                         content_type=type_,
-                        item_info=self._describe_item_info(item, index, type_, doc_title),
+                        item_info=self._describe_item_info(
+                            item, index, type_, doc_title
+                        ),
                         entity_name=None,
                     )
                 desc = str(sections[0]["description"]) if sections else ""
@@ -849,7 +877,9 @@ class VectorPipeline(PipelineRunner):
                 return self._describe_image_raw(item, content_list, index)
             return desc.strip()
 
-        processor = self.modal_processors.get(type_) or self.modal_processors.get("generic")
+        processor = self.modal_processors.get(type_) or self.modal_processors.get(
+            "generic"
+        )
         if processor is None:
             return _join_caption(item.get("text") or item.get("table_body") or "")
         try:
@@ -887,7 +917,9 @@ class VectorPipeline(PipelineRunner):
     ) -> str:
         """Mô tả ảnh bằng text thô (không LLM): caption + footnotes + ngữ cảnh."""
         caption = _join_caption(item.get("image_caption") or item.get("img_caption"))
-        footnotes = _join_caption(item.get("image_footnote") or item.get("img_footnote"))
+        footnotes = _join_caption(
+            item.get("image_footnote") or item.get("img_footnote")
+        )
         context = self._extract_image_context(content_list, index)
         return "\n".join(p for p in (caption, footnotes, context) if p).strip()
 
@@ -895,7 +927,9 @@ class VectorPipeline(PipelineRunner):
         self, content_list: list[dict], index: int, window: int = 1
     ) -> str:
         """Ngữ cảnh text xung quanh ảnh (cùng trang, ±window trang)."""
-        processor = self.modal_processors.get("image") or self.modal_processors.get("generic")
+        processor = self.modal_processors.get("image") or self.modal_processors.get(
+            "generic"
+        )
         item_info = {
             "page_idx": content_list[index].get("page_idx", 0),
             "index": index,
@@ -1018,7 +1052,11 @@ class VectorPipeline(PipelineRunner):
             # Item modal không có text nào dùng được (vd bảng MinerU thiếu
             # table_body) thì chunk chỉ còn tiêu đề + nhãn template -> bỏ hẳn,
             # tránh rác trong ứng viên rerank.
-            if t in ("table", "equation") and not _modal_text(item, t) and not description.strip():
+            if (
+                t in ("table", "equation")
+                and not _modal_text(item, t)
+                and not description.strip()
+            ):
                 logger.info(
                     "chunk: bỏ item %s không có nội dung text (page=%s)",
                     t,
@@ -1035,7 +1073,10 @@ class VectorPipeline(PipelineRunner):
                     source_path=source_path,
                     asset_key=item.get("asset_key"),
                     table_body=item.get("table_body"),
-                    caption=_join_caption(item.get("image_caption") or item.get("table_caption")) or None,
+                    caption=_join_caption(
+                        item.get("image_caption") or item.get("table_caption")
+                    )
+                    or None,
                     extra={"title": title} if title else {},
                 )
             )
@@ -1053,7 +1094,11 @@ class VectorPipeline(PipelineRunner):
         doc_title: str = "",
     ) -> list[Chunk]:
         chunks = self._build_chunks(
-            doc_id, content_list, descriptions, source_path=source_path, doc_title=doc_title
+            doc_id,
+            content_list,
+            descriptions,
+            source_path=source_path,
+            doc_title=doc_title,
         )
         self._save_json(
             ArtifactPaths.chunks_key(self.asset_store, doc_id),
@@ -1079,7 +1124,9 @@ class VectorPipeline(PipelineRunner):
         if isinstance(stored, list) and stored:
             return [Chunk.from_json(c) for c in stored]
         if content_list is None:
-            content_list = await asyncio.to_thread(self.asset_store.load_content_list, doc_id)
+            content_list = await asyncio.to_thread(
+                self.asset_store.load_content_list, doc_id
+            )
         if content_list is None:
             raise FileNotFoundError(
                 f"doc {doc_id}: thiếu chunks.json + content_list trong MinIO - cần parse lại"
@@ -1087,7 +1134,11 @@ class VectorPipeline(PipelineRunner):
         if descriptions is None:
             descriptions = await asyncio.to_thread(self._load_descriptions, doc_id)
         return self._build_chunks(
-            doc_id, content_list, descriptions, source_path=source_path, doc_title=doc_title
+            doc_id,
+            content_list,
+            descriptions,
+            source_path=source_path,
+            doc_title=doc_title,
         )
 
     # ------------------------------------------------------------------
@@ -1120,7 +1171,9 @@ class VectorPipeline(PipelineRunner):
         INGEST_EMBED_CACHE_HITS_TOTAL.inc(self.embedder.count_cache_hits(items))
         try:
             if getattr(self.embedder, "embed_documents_sparse", None):
-                dense, sparse = await self.embedder.embed_documents_sparse(items)  # không cache
+                dense, sparse = await self.embedder.embed_documents_sparse(
+                    items
+                )  # không cache
             else:  # legacy embedder không có sparse
                 dense = await self.embedder.embed_documents(items)
                 sparse = [None] * len(items)
@@ -1194,7 +1247,9 @@ class VectorPipeline(PipelineRunner):
                     intermediate = await self._stage_parse(doc_id, doc)
                 except Exception:
                     document_type = (doc or {}).get("document_type") or "unknown"
-                    INGEST_PARSE_FAILURES_TOTAL.labels(document_type=document_type).inc()
+                    INGEST_PARSE_FAILURES_TOTAL.labels(
+                        document_type=document_type
+                    ).inc()
                     raise
                 content_list = intermediate.content_list
                 source_path = intermediate.file_path or doc_id
@@ -1208,7 +1263,9 @@ class VectorPipeline(PipelineRunner):
                     raise FileNotFoundError(
                         f"doc {doc_id}: thiếu content_list trong MinIO - cần parse lại"
                     )
-                descriptions = await self._stage_describe(doc_id, content_list, doc_title)
+                descriptions = await self._stage_describe(
+                    doc_id, content_list, doc_title
+                )
 
             if start_idx <= 2:
                 if content_list is None:
@@ -1220,7 +1277,9 @@ class VectorPipeline(PipelineRunner):
                         f"doc {doc_id}: thiếu content_list trong MinIO - cần parse lại"
                     )
                 if descriptions is None:
-                    descriptions = await asyncio.to_thread(self._load_descriptions, doc_id)
+                    descriptions = await asyncio.to_thread(
+                        self._load_descriptions, doc_id
+                    )
                 chunks = await self._stage_chunk(
                     doc_id,
                     content_list,
@@ -1271,17 +1330,27 @@ class VectorPipeline(PipelineRunner):
             )
         except VectorStoreError as exc:
             self.store.mark_failed(doc_id, f"vector store: {exc}", effective_start)
-            return StageOutcome(doc_id=doc_id, stage=effective_start, ok=False, error=str(exc))
+            return StageOutcome(
+                doc_id=doc_id, stage=effective_start, ok=False, error=str(exc)
+            )
         except Exception as exc:
-            self.store.mark_failed(doc_id, f"{type(exc).__name__}: {exc}", effective_start)
-            return StageOutcome(doc_id=doc_id, stage=effective_start, ok=False, error=str(exc))
+            self.store.mark_failed(
+                doc_id, f"{type(exc).__name__}: {exc}", effective_start
+            )
+            return StageOutcome(
+                doc_id=doc_id, stage=effective_start, ok=False, error=str(exc)
+            )
 
-    async def _dry_run(self, doc_id: str, row: dict, from_stage: str | None) -> StageOutcome:
+    async def _dry_run(
+        self, doc_id: str, row: dict, from_stage: str | None
+    ) -> StageOutcome:
         """Handshake (GET /info) + đếm chunk / cache hits. Không POST /embed, không ghi."""
         await self.embedder.verify()
         await self.vector_store.ensure_collection(self.collection, self.embedder.dim)
 
-        content_list = await asyncio.to_thread(self.asset_store.load_content_list, doc_id)
+        content_list = await asyncio.to_thread(
+            self.asset_store.load_content_list, doc_id
+        )
         descriptions = await asyncio.to_thread(self._load_descriptions, doc_id)
         source_path = row.get("source_path") or ""
         stored = await asyncio.to_thread(
@@ -1299,7 +1368,10 @@ class VectorPipeline(PipelineRunner):
                 doc_title=(doc or {}).get("title") or row.get("title") or "",
             )
         else:
-            logger.info("doc %s: không có trung gian (content_list/chunks), dry_run trả 0", doc_id)
+            logger.info(
+                "doc %s: không có trung gian (content_list/chunks), dry_run trả 0",
+                doc_id,
+            )
             chunks = []
         items = await self._prepare_embed_items(chunks)
         return StageOutcome(

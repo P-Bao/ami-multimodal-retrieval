@@ -5,6 +5,7 @@ retry chọn doc failed / --max-attempts / preflight dừng sớm / một lỗi 
 reindex --stale mặc định / --dry-run không ghi / preflight / lockfile;
 cleanup dò + xoá collection legacy LightRAG (giữ registry + collection vector pipeline).
 """
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -138,8 +139,12 @@ def _seed(store: DocStatusStore):
     store.ensure_pending("doc-2")
     store.ensure_pending("doc-3")
     store.ensure_pending("doc-4")
-    store.mark_indexed("doc-1", chunk_count=5, embed_model=MODEL, embed_dim=2048, chunker_version="v1")
-    store.mark_indexed("doc-2", chunk_count=4, embed_model=MODEL, embed_dim=2048, chunker_version="v1")
+    store.mark_indexed(
+        "doc-1", chunk_count=5, embed_model=MODEL, embed_dim=2048, chunker_version="v1"
+    )
+    store.mark_indexed(
+        "doc-2", chunk_count=4, embed_model=MODEL, embed_dim=2048, chunker_version="v1"
+    )
     # legacy: pipeline cũ (không embed_model) -> stale
     store._col.insert("doc-3", {"status": LEGACY_PROCESSED, "source_path": "old.pdf"})
     store.mark_failed("doc-4", "boom", "embed")
@@ -219,12 +224,15 @@ async def test_status_stuck_processing_reported(capsys):
     store = _make_store()
     store.ensure_pending("doc-stuck")
     old = datetime.now(timezone.utc) - timedelta(hours=3)
-    store._col.insert("doc-stuck", {
-        "status": STATUS_PROCESSING,
-        "stage": "embed",
-        "updated_at": old,
-        "attempts": 1,
-    })
+    store._col.insert(
+        "doc-stuck",
+        {
+            "status": STATUS_PROCESSING,
+            "stage": "embed",
+            "updated_at": old,
+            "attempts": 1,
+        },
+    )
 
     class DocsRepo:
         def count(self):
@@ -239,7 +247,9 @@ async def test_status_doc_detail(capsys):
     store = _make_store()
     _seed(store)
     await cmd_status(
-        _Args(doc="doc-4"), settings=settings, store=store,
+        _Args(doc="doc-4"),
+        settings=settings,
+        store=store,
         docs_repo=type("R", (), {"count": lambda self: 4})(),
     )
     out = capsys.readouterr().out
@@ -281,8 +291,11 @@ async def test_status_check_embed_server_ok(capsys):
             return 4
 
     await cmd_status(
-        _Args(check_embed_server=True), settings=settings, store=store,
-        docs_repo=DocsRepo(), embedder=embedder,
+        _Args(check_embed_server=True),
+        settings=settings,
+        store=store,
+        docs_repo=DocsRepo(),
+        embedder=embedder,
     )
     out = capsys.readouterr().out
     assert embedder.verify_calls == 1
@@ -292,10 +305,15 @@ async def test_status_check_embed_server_ok(capsys):
 async def test_status_check_embed_server_mismatch(capsys):
     settings = _make_settings()
     store = _make_store()
-    embedder = FakeEmbedder(error=EmbedModelMismatch("embed server chạy model 'other-model'"))
+    embedder = FakeEmbedder(
+        error=EmbedModelMismatch("embed server chạy model 'other-model'")
+    )
     await cmd_status(
-        _Args(check_embed_server=True), settings=settings, store=store,
-        docs_repo=type("R", (), {"count": lambda self: 0})(), embedder=embedder,
+        _Args(check_embed_server=True),
+        settings=settings,
+        store=store,
+        docs_repo=type("R", (), {"count": lambda self: 0})(),
+        embedder=embedder,
     )
     assert "LỆCH hoặc lỗi" in capsys.readouterr().out
 
@@ -309,8 +327,11 @@ async def test_retry_all_failed_runs_only_failed():
     _seed(store)
     runner = FakeRunner()
     rc = await cmd_retry(
-        _Args(all_failed=True, yes=True), settings=settings, store=store,
-        docs_repo=None, runner=runner,
+        _Args(all_failed=True, yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert rc == 0
     assert sorted(doc_id for doc_id, _, _ in runner.runs) == ["doc-4"]
@@ -322,8 +343,11 @@ async def test_retry_doc_specific_non_failed_skipped():
     _seed(store)
     runner = FakeRunner()
     rc = await cmd_retry(
-        _Args(doc=["doc-1"], yes=True), settings=settings, store=store,
-        docs_repo=None, runner=runner,
+        _Args(doc=["doc-1"], yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert rc == 0
     assert runner.runs == []
@@ -336,8 +360,11 @@ async def test_retry_max_attempts_skips():
     store.mark_failed("doc-4", "boom 2", "embed")  # attempts = 2
     runner = FakeRunner()
     await cmd_retry(
-        _Args(all_failed=True, max_attempts=2, yes=True), settings=settings,
-        store=store, docs_repo=None, runner=runner,
+        _Args(all_failed=True, max_attempts=2, yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert runner.runs == []
 
@@ -346,10 +373,15 @@ async def test_retry_preflight_failure_stops_early_no_fail_marked():
     settings = _make_settings()
     store = _make_store()
     _seed(store)
-    runner = FakeRunner(preflight_error=EmbedServerUnreachable("embed server unreachable"))
+    runner = FakeRunner(
+        preflight_error=EmbedServerUnreachable("embed server unreachable")
+    )
     rc = await cmd_retry(
-        _Args(all_failed=True, yes=True), settings=settings, store=store,
-        docs_repo=None, runner=runner,
+        _Args(all_failed=True, yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert rc == 2
     assert runner.runs == []
@@ -366,8 +398,11 @@ async def test_retry_one_failure_doesnt_stop_batch():
     store.mark_failed("doc-b", "e2", "chunk")
     runner = FakeRunner(fail_ids={"doc-a"})
     rc = await cmd_retry(
-        _Args(all_failed=True, yes=True), settings=settings, store=store,
-        docs_repo=None, runner=runner,
+        _Args(all_failed=True, yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert rc == 1
     assert sorted(doc_id for doc_id, _, _ in runner.runs) == ["doc-a", "doc-b"]
@@ -379,8 +414,11 @@ async def test_retry_from_stage_passed_to_runner():
     _seed(store)
     runner = FakeRunner()
     await cmd_retry(
-        _Args(all_failed=True, from_stage="parse", yes=True), settings=settings,
-        store=store, docs_repo=None, runner=runner,
+        _Args(all_failed=True, from_stage="parse", yes=True),
+        settings=settings,
+        store=store,
+        docs_repo=None,
+        runner=runner,
     )
     assert runner.runs == [("doc-4", "parse", False)]
 
@@ -420,7 +458,9 @@ async def test_reindex_preflight_failure_stops_early():
     settings = _make_settings()
     store = _make_store()
     _seed(store)
-    runner = FakeRunner(preflight_error=EmbedServerUnreachable("embed server unreachable"))
+    runner = FakeRunner(
+        preflight_error=EmbedServerUnreachable("embed server unreachable")
+    )
     rc = await cmd_reindex(_Args(), settings=settings, store=store, runner=runner)
     assert rc == 2
     assert all(not dry_run for _, _, dry_run in runner.runs) and not runner.runs
@@ -432,12 +472,18 @@ async def test_reindex_all_runs_everything_with_preflight():
     _seed(store)
     runner = FakeRunner()
     rc = await cmd_reindex(
-        _Args(all=True, from_stage="chunk"), settings=settings, store=store, runner=runner
+        _Args(all=True, from_stage="chunk"),
+        settings=settings,
+        store=store,
+        runner=runner,
     )
     assert rc == 0
     assert runner.preflight_calls == 1
     assert sorted(doc_id for doc_id, from_stage, _ in runner.runs) == [
-        "doc-1", "doc-2", "doc-3", "doc-4",
+        "doc-1",
+        "doc-2",
+        "doc-3",
+        "doc-4",
     ]
     assert all(from_stage == "chunk" for _, from_stage, _ in runner.runs)
 
@@ -487,7 +533,9 @@ async def test_reindex_from_stage_invalid_raises():
     _seed(store)
     with pytest.raises(ValueError):
         await cmd_reindex(
-            _Args(from_stage="indexed"), settings=settings, store=store,
+            _Args(from_stage="indexed"),
+            settings=settings,
+            store=store,
             runner=FakeRunner(),
         )
 
@@ -506,8 +554,11 @@ async def test_reindex_scan_creates_pending_and_selects_candidates():
     }
     runner = FakeRunner(asset_store=FakeCLIAssetStore(with_content_list=False))
     rc = await cmd_reindex(
-        _Args(scan=True), settings=settings, store=store,
-        runner=runner, docs_repo=FakeScanDocsRepo(docs),
+        _Args(scan=True),
+        settings=settings,
+        store=store,
+        runner=runner,
+        docs_repo=FakeScanDocsRepo(docs),
     )
     assert rc == 0
     # candidates = pending (doc-9) + stale (doc-3); indexed/failed loại trừ
@@ -527,8 +578,11 @@ async def test_reindex_scan_content_list_present_uses_chunk_stage():
     }
     runner = FakeRunner(asset_store=FakeCLIAssetStore(with_content_list=True))
     rc = await cmd_reindex(
-        _Args(scan=True), settings=settings, store=store,
-        runner=runner, docs_repo=FakeScanDocsRepo(docs),
+        _Args(scan=True),
+        settings=settings,
+        store=store,
+        runner=runner,
+        docs_repo=FakeScanDocsRepo(docs),
     )
     assert rc == 0
     assert sorted(doc_id for doc_id, _, _ in runner.runs) == ["doc-3", "doc-9"]
@@ -540,11 +594,17 @@ async def test_reindex_scan_does_not_select_indexed_or_failed():
     settings = _make_settings()
     store = _make_store()
     _seed(store)  # doc-1/doc-2 indexed, doc-3 legacy, doc-4 failed
-    docs = {"doc-1": {"_id": "doc-1", "file_path": "a.pdf"}, "doc-4": {"_id": "doc-4", "content": "x"}}
+    docs = {
+        "doc-1": {"_id": "doc-1", "file_path": "a.pdf"},
+        "doc-4": {"_id": "doc-4", "content": "x"},
+    }
     runner = FakeRunner(asset_store=FakeCLIAssetStore(with_content_list=True))
     rc = await cmd_reindex(
-        _Args(scan=True), settings=settings, store=store,
-        runner=runner, docs_repo=FakeScanDocsRepo(docs),
+        _Args(scan=True),
+        settings=settings,
+        store=store,
+        runner=runner,
+        docs_repo=FakeScanDocsRepo(docs),
     )
     assert rc == 0
     # chỉ doc-3 (legacy stale); indexed + failed không reindex
@@ -556,7 +616,9 @@ async def test_reindex_scan_does_not_select_indexed_or_failed():
 # --------------------------------------------------------------------------
 def _seed_n(store: DocStatusStore, n: int):
     for i in range(n):
-        store._col.insert(f"doc-{i}", {"status": LEGACY_PROCESSED, "source_path": f"old{i}.pdf"})
+        store._col.insert(
+            f"doc-{i}", {"status": LEGACY_PROCESSED, "source_path": f"old{i}.pdf"}
+        )
 
 
 async def test_reindex_limit_runs_only_first_n_docs(capsys):
@@ -566,7 +628,9 @@ async def test_reindex_limit_runs_only_first_n_docs(capsys):
     runner = FakeRunner()
     rc = await cmd_reindex(
         _Args(all=True, limit=2, batch=0),
-        settings=settings, store=store, runner=runner,
+        settings=settings,
+        store=store,
+        runner=runner,
     )
     assert rc == 0
     assert [doc_id for doc_id, _, _ in runner.runs] == ["doc-0", "doc-1"]
@@ -579,7 +643,9 @@ async def test_reindex_limit_applied_before_dry_run(capsys):
     runner = FakeRunner(chunks=7, cache_hits=2)
     await cmd_reindex(
         _Args(all=True, limit=2, dry_run=True, batch=0),
-        settings=settings, store=store, runner=runner,
+        settings=settings,
+        store=store,
+        runner=runner,
     )
     out = capsys.readouterr().out
     assert "2 doc" in out
@@ -600,7 +666,9 @@ async def test_reindex_sleep_between_docs_not_before_first(monkeypatch):
     runner = FakeRunner()
     await cmd_reindex(
         _Args(all=True, sleep=0.5, batch=0, batch_sleep=0.0),
-        settings=settings, store=store, runner=runner,
+        settings=settings,
+        store=store,
+        runner=runner,
     )
     # 3 doc -> 2 lần ngủ giữa, không ngủ trước doc đầu
     assert sleeps == [0.5, 0.5]
@@ -619,7 +687,9 @@ async def test_reindex_batch_sleep_starts_new_batch(monkeypatch):
     runner = FakeRunner()
     await cmd_reindex(
         _Args(all=True, sleep=0.0, batch=2, batch_sleep=1.0),
-        settings=settings, store=store, runner=runner,
+        settings=settings,
+        store=store,
+        runner=runner,
     )
     assert sleeps == [0.0, 1.0, 0.0, 1.0]
     assert len(runner.runs) == 5
@@ -747,8 +817,10 @@ def _make_legacy_dbs():
 async def test_cleanup_dry_run_lists_legacy_deletes_nothing(capsys):
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(dry_run=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(dry_run=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -765,8 +837,10 @@ async def test_cleanup_dry_run_lists_legacy_deletes_nothing(capsys):
 async def test_cleanup_yes_deletes_all_legacy(capsys):
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(yes=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     assert sorted(mongo.dropped) == [
@@ -777,15 +851,21 @@ async def test_cleanup_yes_deletes_all_legacy(capsys):
     assert sorted(qdrant.deleted) == ["multimodal_chunks", "multimodal_entities"]
     # registry + vector pipeline + ngoài workspace sống sót
     assert set(mongo.counts) == {_KEEP_MONGO, "some_other_db_collection"}
-    assert set(qdrant.counts) == {_KEEP_QDRANT, "multimodal__old-model__v1", "other_service_collection"}
+    assert set(qdrant.counts) == {
+        _KEEP_QDRANT,
+        "multimodal__old-model__v1",
+        "other_service_collection",
+    }
 
 
 async def test_cleanup_confirm_declined_deletes_nothing(monkeypatch, capsys):
     mongo, qdrant = _make_legacy_dbs()
     monkeypatch.setattr("builtins.input", lambda *_: "n")
     rc = await cmd_cleanup(
-        _Args(yes=False, dry_run=False), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=False, dry_run=False),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     assert "đã huỷ" in capsys.readouterr().out
@@ -795,16 +875,20 @@ async def test_cleanup_confirm_declined_deletes_nothing(monkeypatch, capsys):
 async def test_cleanup_mongo_only_and_qdrant_only():
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(yes=True, mongo_only=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=True, mongo_only=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     assert len(mongo.dropped) == 3 and not qdrant.deleted
 
     mongo2, qdrant2 = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(yes=True, qdrant_only=True), settings=_make_settings(),
-        mongo_db=mongo2, qdrant_client=qdrant2,
+        _Args(yes=True, qdrant_only=True),
+        settings=_make_settings(),
+        mongo_db=mongo2,
+        qdrant_client=qdrant2,
     )
     assert rc == 0
     assert len(qdrant2.deleted) == 2 and not mongo2.dropped
@@ -814,8 +898,10 @@ async def test_cleanup_no_legacy_returns_zero(capsys):
     mongo = FakeMongoDB({_KEEP_MONGO: 5})
     qdrant = FakeQdrantClient({_KEEP_QDRANT: 5})
     rc = await cmd_cleanup(
-        _Args(yes=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     assert "không có collection legacy nào cần xoá" in capsys.readouterr().out
@@ -828,8 +914,10 @@ async def test_cleanup_connection_error_returns_2(capsys):
             raise RuntimeError("mongo down")
 
     rc = await cmd_cleanup(
-        _Args(yes=True), settings=_make_settings(),
-        mongo_db=BrokenMongo(), qdrant_client=FakeQdrantClient({}),
+        _Args(yes=True),
+        settings=_make_settings(),
+        mongo_db=BrokenMongo(),
+        qdrant_client=FakeQdrantClient({}),
     )
     assert rc == 2
     assert "STOPPED" in capsys.readouterr().out
@@ -842,8 +930,10 @@ async def test_cleanup_partial_delete_failure_returns_1(capsys):
         fail_delete={"multimodal_entities"},
     )
     rc = await cmd_cleanup(
-        _Args(yes=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 1
     out = capsys.readouterr().out
@@ -854,8 +944,10 @@ async def test_cleanup_partial_delete_failure_returns_1(capsys):
 async def test_cleanup_stale_models_drops_old_model_collections(capsys):
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(yes=True, stale_models=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(yes=True, stale_models=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -878,8 +970,10 @@ async def test_cleanup_stale_models_drops_old_model_collections(capsys):
 async def test_cleanup_stale_models_dry_run_keeps_current(capsys):
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
-        _Args(dry_run=True, stale_models=True), settings=_make_settings(),
-        mongo_db=mongo, qdrant_client=qdrant,
+        _Args(dry_run=True, stale_models=True),
+        settings=_make_settings(),
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     out = capsys.readouterr().out
@@ -893,7 +987,8 @@ async def test_cleanup_stale_models_qdrant_only(capsys):
     qdrant = FakeQdrantClient({_KEEP_QDRANT: 5, "multimodal__old-model__v1": 3})
     rc = await cmd_cleanup(
         _Args(yes=True, stale_models=True, qdrant_only=True),
-        settings=_make_settings(), qdrant_client=qdrant,
+        settings=_make_settings(),
+        qdrant_client=qdrant,
     )
     assert rc == 0
     assert qdrant.deleted == ["multimodal__old-model__v1"]
@@ -905,18 +1000,21 @@ async def test_cleanup_purge_cache_model(tmp_path, capsys):
 
     cache_path = tmp_path / "cache.db"
     cache = EmbeddingCache(cache_path)
-    cache.put_many({
-        "Qwen/Qwen3-VL-Embedding-2B|2048|ns|a": [0.1] * 4,
-        "Qwen/Qwen3-VL-Embedding-2B|2048|ns|b": [0.2] * 4,
-        "nvidia/llama-nemotron-embed-vl-1b-v2|2048|ns|c": [0.3] * 4,
-    })
+    cache.put_many(
+        {
+            "Qwen/Qwen3-VL-Embedding-2B|2048|ns|a": [0.1] * 4,
+            "Qwen/Qwen3-VL-Embedding-2B|2048|ns|b": [0.2] * 4,
+            "nvidia/llama-nemotron-embed-vl-1b-v2|2048|ns|c": [0.3] * 4,
+        }
+    )
     cache.close()
 
     mongo, qdrant = _make_legacy_dbs()
     rc = await cmd_cleanup(
         _Args(yes=True, purge_cache_model=["Qwen/Qwen3-VL-Embedding-2B"]),
         settings=_make_settings(EMBED_CACHE_PATH=str(cache_path)),
-        mongo_db=mongo, qdrant_client=qdrant,
+        mongo_db=mongo,
+        qdrant_client=qdrant,
     )
     assert rc == 0
     out = capsys.readouterr().out

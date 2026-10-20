@@ -28,9 +28,16 @@ class StubClient:
     def get_collection(self, name):
         return self.existing[name]
 
-    def create_collection(self, collection_name, vectors_config, sparse_vectors_config=None):
+    def create_collection(
+        self, collection_name, vectors_config, sparse_vectors_config=None
+    ):
         self.calls.append(
-            ("create_collection", collection_name, vectors_config, sparse_vectors_config)
+            (
+                "create_collection",
+                collection_name,
+                vectors_config,
+                sparse_vectors_config,
+            )
         )
         self.existing[collection_name] = _info(vectors_config, sparse_vectors_config)
 
@@ -159,7 +166,9 @@ async def test_ensure_collection_existing_legacy_sparse_false_ok():
 
 async def test_ensure_collection_existing_named_missing_sparse_raises():
     stub = StubClient()
-    stub.existing["col"] = _info({"dense": models.VectorParams(size=8, distance=models.Distance.COSINE)})
+    stub.existing["col"] = _info(
+        {"dense": models.VectorParams(size=8, distance=models.Distance.COSINE)}
+    )
     store = _store(stub)
     with pytest.raises(VectorStoreError):
         await store.ensure_collection("col", 8)
@@ -230,10 +239,15 @@ async def test_search_hybrid_prefetch_and_rrf():
     prefetch = kwargs["prefetch"]
     assert len(prefetch) == 2
     dense_p, sparse_p = prefetch
-    assert dense_p.using == "dense" and dense_p.query == [0.1] * 8 and dense_p.limit == 5
+    assert (
+        dense_p.using == "dense" and dense_p.query == [0.1] * 8 and dense_p.limit == 5
+    )
     assert sparse_p.using == "sparse" and sparse_p.limit == 5
     assert isinstance(sparse_p.query, models.SparseVector)
-    assert list(sparse_p.query.indices) == [9, 2] and list(sparse_p.query.values) == [0.7, 0.1]
+    assert list(sparse_p.query.indices) == [9, 2] and list(sparse_p.query.values) == [
+        0.7,
+        0.1,
+    ]
     assert isinstance(kwargs["query"], models.FusionQuery)
     assert kwargs["query"].fusion == models.Fusion.RRF
     assert kwargs["limit"] == 5 and kwargs["with_payload"] is True

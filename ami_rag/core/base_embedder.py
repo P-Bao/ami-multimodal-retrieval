@@ -137,7 +137,9 @@ class BaseRemoteEmbedder:
             if resp.status_code in (401, 403):
                 raise EmbedAuthError(f"embed server từ chối token: {detail}")
             if resp.status_code in self.too_long_statuses:
-                raise EmbedInputTooLong(f"input quá dài / payload vượt giới hạn: {detail}")
+                raise EmbedInputTooLong(
+                    f"input quá dài / payload vượt giới hạn: {detail}"
+                )
             if resp.status_code == 507:
                 raise EmbedServerOOM(f"embed server hết GPU memory: {detail}")
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -218,7 +220,9 @@ class BaseRemoteEmbedder:
             )
         return out
 
-    def _split_batches(self, items: list[str | dict], pending: list[int]) -> list[list[int]]:
+    def _split_batches(
+        self, items: list[str | dict], pending: list[int]
+    ) -> list[list[int]]:
         """Chia batch theo số item VÀ theo byte payload (ảnh/text rất lớn tách riêng)."""
         batches: list[list[int]] = []
         current: list[int] = []

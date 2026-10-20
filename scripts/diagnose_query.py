@@ -63,10 +63,14 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
 
     print(f"collection : {pipeline.collection}")
     print(f"query      : {args.query!r}")
-    print(f"embedder   : {type(pipeline.embedder).__name__} model={settings.EMBED_MODEL}")
+    print(
+        f"embedder   : {type(pipeline.embedder).__name__} model={settings.EMBED_MODEL}"
+    )
     print(f"rerank     : backend={backend} fusion={fusion} multimodal={multimodal}")
-    print(f"candidates : max({settings.RETRIEVAL_CHUNK_TOP_K}, {args.top_k}*2"
-          f", {args.candidates}) = {args.candidates}")
+    print(
+        f"candidates : max({settings.RETRIEVAL_CHUNK_TOP_K}, {args.top_k}*2"
+        f", {args.candidates}) = {args.candidates}"
+    )
 
     vector = await pipeline.embedder.embed_query(args.query)
     hits = await pipeline.vector_store.search(
@@ -75,7 +79,9 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
     chunks = [hit.payload for hit in hits]
 
     _print_header("ỨNG VIÊN VECTOR (theo điểm Qdrant giảm dần)")
-    print(f"{'#':>3} {'vec':>7}  {'modality':<{_MODALITY_WIDTH}} {'doc_id':<26} {'page':>5}  text")
+    print(
+        f"{'#':>3} {'vec':>7}  {'modality':<{_MODALITY_WIDTH}} {'doc_id':<26} {'page':>5}  text"
+    )
     candidates: list[dict] = []
     for rank, hit in enumerate(hits, start=1):
         payload = hit.payload or {}
@@ -89,7 +95,9 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
         )
 
     visual_ranks = [
-        c["rank"] for c in candidates if (c["chunk"].get("modality") or "text") == "image"
+        c["rank"]
+        for c in candidates
+        if (c["chunk"].get("modality") or "text") == "image"
     ]
 
     documents = await build_rerank_documents(
@@ -114,7 +122,9 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
         print(f"!! rerank lỗi: {exc}")
 
     raw.sort(key=lambda r: -r["score"])
-    print(f"\n{'rank':>4} {'raw':>8}  {'modality':<{_MODALITY_WIDTH}} {'doc_id':<26} {'page':>5}  text")
+    print(
+        f"\n{'rank':>4} {'raw':>8}  {'modality':<{_MODALITY_WIDTH}} {'doc_id':<26} {'page':>5}  text"
+    )
     for rank, r in enumerate(raw, start=1):
         payload = chunks[r["idx"]]
         modality = payload.get("modality") or "text"
@@ -156,36 +166,62 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
         if (chunks[r["idx"]].get("modality") or "text") == "image"
     ]
     all_image_final = [
-        (i, r) for i, r in enumerate(final, start=1)
+        (i, r)
+        for i, r in enumerate(final, start=1)
         if (chunks[r["idx"]].get("modality") or "text") in MULTIMODAL_RERANK_TYPES
     ]
     best_text_raw = next(
-        (r["score"] for r in raw if (chunks[r["idx"]].get("modality") or "text") != "image"),
+        (
+            r["score"]
+            for r in raw
+            if (chunks[r["idx"]].get("modality") or "text") != "image"
+        ),
         None,
     )
     best_image_raw = next(
-        (r["score"] for r in raw if (chunks[r["idx"]].get("modality") or "text") == "image"),
+        (
+            r["score"]
+            for r in raw
+            if (chunks[r["idx"]].get("modality") or "text") == "image"
+        ),
         None,
     )
 
     _print_header("KẾT LUẬN")
-    print(f"ứng viên vector có ảnh : {len(visual_ranks)}" + (
-        f" (hạng vector {visual_ranks})" if visual_ranks else " -> KHÔNG có ảnh nào trong ứng viên"
-    ))
+    print(
+        f"ứng viên vector có ảnh : {len(visual_ranks)}"
+        + (
+            f" (hạng vector {visual_ranks})"
+            if visual_ranks
+            else " -> KHÔNG có ảnh nào trong ứng viên"
+        )
+    )
     print(f"best image raw score   : {best_image_raw}")
     print(f"best text  raw score   : {best_text_raw}")
     if best_image_raw is not None and best_text_raw is not None:
         gap = best_text_raw - best_image_raw
-        print(f"chênh lệch text - image: {gap:+.4f}"
-              + ("  -> image thua text (vấn đề RERANK)" if gap > 0 else "  -> image đang thắng text"))
-    print(f"ảnh trong top {args.top_k}      : {len(image_final)}"
-          f"{' (modal ' + str(MULTIMODAL_RERANK_TYPES) + ': ' + str(len(all_image_final)) + ')' if not image_final else ''}")
+        print(
+            f"chênh lệch text - image: {gap:+.4f}"
+            + (
+                "  -> image thua text (vấn đề RERANK)"
+                if gap > 0
+                else "  -> image đang thắng text"
+            )
+        )
+    print(
+        f"ảnh trong top {args.top_k}      : {len(image_final)}"
+        f"{' (modal ' + str(MULTIMODAL_RERANK_TYPES) + ': ' + str(len(all_image_final)) + ')' if not image_final else ''}"
+    )
     if visual_ranks and not image_final:
-        print("-> ẢNH CÓ trong ứng viên vector nhưng bị cắt ở rerank: "
-              "cần sửa tầng rerank (RERANK_MIN_VISUAL / RERANK_FUSION / weight).")
+        print(
+            "-> ẢNH CÓ trong ứng viên vector nhưng bị cắt ở rerank: "
+            "cần sửa tầng rerank (RERANK_MIN_VISUAL / RERANK_FUSION / weight)."
+        )
     elif not visual_ranks:
-        print("-> ẢNH KHÔNG vào được ứng viên vector: cần sửa tầng embed "
-              "(vector recall) hoặc index chưa có chunk ảnh.")
+        print(
+            "-> ẢNH KHÔNG vào được ứng viên vector: cần sửa tầng embed "
+            "(vector recall) hoặc index chưa có chunk ảnh."
+        )
 
     payload_out = {
         "query": args.query,
@@ -235,9 +271,15 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chẩn đoán retrieval 1 query")
     parser.add_argument("--query", required=True, help="câu hỏi cần chẩn đoán")
-    parser.add_argument("--top-k", type=int, default=5, help="số doc cuối cùng (giống RAG request)")
-    parser.add_argument("--candidates", type=int, default=0,
-                        help="số ứng viên lấy từ Qdrant (0 = max(RETRIEVAL_CHUNK_TOP_K, top_k*2))")
+    parser.add_argument(
+        "--top-k", type=int, default=5, help="số doc cuối cùng (giống RAG request)"
+    )
+    parser.add_argument(
+        "--candidates",
+        type=int,
+        default=0,
+        help="số ứng viên lấy từ Qdrant (0 = max(RETRIEVAL_CHUNK_TOP_K, top_k*2))",
+    )
     parser.add_argument("--output", help="ghi kết quả JSON ra file")
     args = parser.parse_args()
     settings = get_settings()

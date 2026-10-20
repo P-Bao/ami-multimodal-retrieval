@@ -62,21 +62,29 @@ class BackendDataExtractor:
     def _fallback_enabled(self, kind: str) -> bool:
         return self._fallback is not None and kind in self._fallback_modes
 
-    def _log_fallback(self, kind: str, reason: str, exc: BaseException | None = None) -> None:
+    def _log_fallback(
+        self, kind: str, reason: str, exc: BaseException | None = None
+    ) -> None:
         detail = f": {exc}" if exc is not None else ""
-        logger.warning("OCR %s: %s -> chuyển sang fallback Vinter%s", kind, reason, detail)
+        logger.warning(
+            "OCR %s: %s -> chuyển sang fallback Vinter%s", kind, reason, detail
+        )
 
     # ------------------------------------------------------------------
     # HTTP helper
     # ------------------------------------------------------------------
-    async def _post_file(self, endpoint: str, file_bytes: bytes, filename: str, content_type: str):
+    async def _post_file(
+        self, endpoint: str, file_bytes: bytes, filename: str, content_type: str
+    ):
         import httpx
 
         files = {"file": (filename, io.BytesIO(file_bytes), content_type)}
         try:
             if self._http_client is not None:
                 response = await self._http_client.post(
-                    f"{self._base_url}/{endpoint}", files=files, headers={"Accept": "application/json"}
+                    f"{self._base_url}/{endpoint}",
+                    files=files,
+                    headers={"Accept": "application/json"},
                 )
             else:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -86,7 +94,9 @@ class BackendDataExtractor:
                         headers={"Accept": "application/json"},
                     )
         except httpx.HTTPError as exc:
-            if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+            if isinstance(
+                exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)
+            ):
                 hint = "OCR service nhận kết nối nhưng không phản hồi (service treo/quá tải)"
             elif isinstance(exc, httpx.ConnectError):
                 hint = "Không kết nối được OCR service (host/port unreachable hoặc firewall)"
@@ -103,7 +113,9 @@ class BackendDataExtractor:
         try:
             return response.json()
         except ValueError as exc:
-            raise BackendDataParseError("OCR service trả response không phải JSON") from exc
+            raise BackendDataParseError(
+                "OCR service trả response không phải JSON"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Text: pdfplumber -> PyMuPDF -> hierarchy-parse endpoint
@@ -132,10 +144,14 @@ class BackendDataExtractor:
                             continue
                         md_rows = []
                         for i, row in enumerate(rows):
-                            cells = [str(c or "").strip().replace("|", "\\|") for c in row]
+                            cells = [
+                                str(c or "").strip().replace("|", "\\|") for c in row
+                            ]
                             md_rows.append("| " + " | ".join(cells) + " |")
                             if i == 0:
-                                md_rows.append("| " + " | ".join(["---"] * len(cells)) + " |")
+                                md_rows.append(
+                                    "| " + " | ".join(["---"] * len(cells)) + " |"
+                                )
                         page_blocks.append(
                             {
                                 "type": "table",
@@ -154,7 +170,12 @@ class BackendDataExtractor:
                     words = page.extract_words()
                     non_table_words = []
                     for word in words:
-                        word_bbox = (word["x0"], word["top"], word["x1"], word["bottom"])
+                        word_bbox = (
+                            word["x0"],
+                            word["top"],
+                            word["x1"],
+                            word["bottom"],
+                        )
                         in_table = False
                         for tbbox in table_bboxes:
                             if (
@@ -217,7 +238,9 @@ class BackendDataExtractor:
             for page_index in range(len(doc)):
                 text = doc[page_index].get_text("text").strip()
                 if text:
-                    out.append({"type": "paragraph", "content": text, "page": page_index + 1})
+                    out.append(
+                        {"type": "paragraph", "content": text, "page": page_index + 1}
+                    )
             doc.close()
             return out
         except Exception:
@@ -237,12 +260,16 @@ class BackendDataExtractor:
         for child in node.get("children") or []:
             BackendDataExtractor._flatten_hierarchy(child, parts)
 
-    async def extract_scan_text(self, file_bytes: bytes, filename: str = "document.pdf") -> str:
+    async def extract_scan_text(
+        self, file_bytes: bytes, filename: str = "document.pdf"
+    ) -> str:
         primary_exc: BackendDataParseError | None = None
         fallback_exc: BaseException | None = None
         data = None
         try:
-            data = await self._post_file(self._text_endpoint, file_bytes, filename, "application/pdf")
+            data = await self._post_file(
+                self._text_endpoint, file_bytes, filename, "application/pdf"
+            )
         except BackendDataParseError as exc:
             primary_exc = exc
         parts: list[str] = []
@@ -267,7 +294,9 @@ class BackendDataExtractor:
             )
             fallback_exc = None
             try:
-                text = (await self._fallback.ocr_text(file_bytes, filename=filename)).strip()
+                text = (
+                    await self._fallback.ocr_text(file_bytes, filename=filename)
+                ).strip()
             except Exception as exc:  # nuốt mọi lỗi fallback để còn lớp PyMuPDF
                 fallback_exc = exc
                 logger.warning("OCR text: fallback Vinter cũng lỗi: %s", exc)
@@ -283,23 +312,31 @@ class BackendDataExtractor:
                     f"OCR service chính lỗi: {primary_exc}; OCR fallback Vinter cũng lỗi: {fallback_exc}"
                 ) from primary_exc
             raise primary_exc
-        raise BackendDataParseError("OCR service không trích xuất được nội dung từ PDF scan")
+        raise BackendDataParseError(
+            "OCR service không trích xuất được nội dung từ PDF scan"
+        )
 
     # ------------------------------------------------------------------
     # Bảng: Qwen table endpoint
     # ------------------------------------------------------------------
-    async def extract_tables(self, file_bytes: bytes, filename: str = "document.pdf") -> list[dict]:
+    async def extract_tables(
+        self, file_bytes: bytes, filename: str = "document.pdf"
+    ) -> list[dict]:
         primary_exc: BackendDataParseError | None = None
         tables: list[dict] = []
         try:
-            data = await self._post_file(self._table_endpoint, file_bytes, filename, "application/pdf")
+            data = await self._post_file(
+                self._table_endpoint, file_bytes, filename, "application/pdf"
+            )
             tables = self._parse_table_response(data)
         except BackendDataParseError as exc:
             primary_exc = exc
         if tables:
             return tables
         # Fallback Vinter: primary lỗi, hoặc primary trả rỗng (khi fallback_on_empty)
-        if self._fallback_enabled("table") and (primary_exc is not None or self._fallback_on_empty):
+        if self._fallback_enabled("table") and (
+            primary_exc is not None or self._fallback_on_empty
+        ):
             self._log_fallback(
                 "table",
                 "primary lỗi" if primary_exc is not None else "primary trả rỗng",
@@ -308,7 +345,9 @@ class BackendDataExtractor:
             try:
                 return await self._fallback.ocr_tables(file_bytes, filename=filename)
             except Exception as exc:  # bảng có html pdfplumber làm lưới an toàn
-                logger.warning("OCR table: fallback Vinter cũng lỗi, dùng html pdfplumber: %s", exc)
+                logger.warning(
+                    "OCR table: fallback Vinter cũng lỗi, dùng html pdfplumber: %s", exc
+                )
                 return []
         # Không có fallback (tắt/không configured): giữ hành vi cũ
         if primary_exc is not None:
@@ -323,21 +362,37 @@ class BackendDataExtractor:
             if "tables" in data and isinstance(data["tables"], list):
                 for t in data["tables"]:
                     tables.append(
-                        {"html": t.get("html", ""), "page": t.get("page"), "raw_response": t}
+                        {
+                            "html": t.get("html", ""),
+                            "page": t.get("page"),
+                            "raw_response": t,
+                        }
                     )
             elif "html" in data:
                 tables.append(
-                    {"html": data.get("html", ""), "page": data.get("page"), "raw_response": data}
+                    {
+                        "html": data.get("html", ""),
+                        "page": data.get("page"),
+                        "raw_response": data,
+                    }
                 )
             else:
                 tables.append(
-                    {"html": json.dumps(data, ensure_ascii=False), "page": None, "raw_response": data}
+                    {
+                        "html": json.dumps(data, ensure_ascii=False),
+                        "page": None,
+                        "raw_response": data,
+                    }
                 )
         elif isinstance(data, list):
             for item in data:
                 if isinstance(item, dict) and "html" in item:
                     tables.append(
-                        {"html": item.get("html", ""), "page": item.get("page"), "raw_response": item}
+                        {
+                            "html": item.get("html", ""),
+                            "page": item.get("page"),
+                            "raw_response": item,
+                        }
                     )
                 elif isinstance(item, str):
                     tables.append({"html": item, "page": None, "raw_response": item})
@@ -380,15 +435,28 @@ class BackendDataExtractor:
                 f.write(file_bytes)
             try:
                 result = subprocess.run(
-                    ["soffice", "--headless", "--norestore", "--convert-to", "docx", "--outdir", workdir, input_path],
+                    [
+                        "soffice",
+                        "--headless",
+                        "--norestore",
+                        "--convert-to",
+                        "docx",
+                        "--outdir",
+                        workdir,
+                        input_path,
+                    ],
                     capture_output=True,
                     timeout=120,
                     check=False,
                 )
             except FileNotFoundError as e:
-                raise BackendDataParseError("LibreOffice (soffice) chưa được cài đặt") from e
+                raise BackendDataParseError(
+                    "LibreOffice (soffice) chưa được cài đặt"
+                ) from e
             except subprocess.TimeoutExpired as e:
-                raise BackendDataParseError("Convert .doc -> .docx quá thời gian chờ") from e
+                raise BackendDataParseError(
+                    "Convert .doc -> .docx quá thời gian chờ"
+                ) from e
             if result.returncode != 0 or not os.path.exists(output_path):
                 raise BackendDataParseError(
                     f"Convert .doc -> .docx thất bại: {result.stderr.decode(errors='ignore')[:300]}"
@@ -424,7 +492,11 @@ class BackendDataExtractor:
         if style_name.startswith("heading"):
             try:
                 level = int(style_name.replace("heading", "").strip())
-                return {"type": "heading", "content": f"{'#' * level} {text}", "level": level}
+                return {
+                    "type": "heading",
+                    "content": f"{'#' * level} {text}",
+                    "level": level,
+                }
             except ValueError:
                 pass
         if paragraph._p.pPr is not None and paragraph._p.pPr.numPr is not None:
@@ -468,8 +540,10 @@ def create_extractor(settings) -> BackendDataExtractor:
     return BackendDataExtractor(
         base_url=getattr(settings, "OCR_SERVICE_URL", "") or DEFAULT_BASE_URL,
         timeout=float(getattr(settings, "OCR_SERVICE_TIMEOUT", 300) or 300),
-        table_endpoint=getattr(settings, "OCR_TABLE_ENDPOINT", "") or DEFAULT_TABLE_ENDPOINT,
-        text_endpoint=getattr(settings, "OCR_TEXT_ENDPOINT", "") or DEFAULT_TEXT_ENDPOINT,
+        table_endpoint=getattr(settings, "OCR_TABLE_ENDPOINT", "")
+        or DEFAULT_TABLE_ENDPOINT,
+        text_endpoint=getattr(settings, "OCR_TEXT_ENDPOINT", "")
+        or DEFAULT_TEXT_ENDPOINT,
         fallback=build_vinter_ocr_client(settings),
         fallback_modes=resolve_ocr_fallback_modes(settings),
         fallback_on_empty=bool(getattr(settings, "OCR_FALLBACK_ON_EMPTY", True)),
@@ -535,18 +609,36 @@ def build_pdf_content_blocks(blocks: list[dict], qwen_tables: list[dict]) -> lis
             page_idx = max(page - 1, 0)
             if b["type"] == "table":
                 qwen = next(qwen_iter, None)
-                html = (qwen or {}).get("html") or b.get("html") or b.get("content") or ""
+                html = (
+                    (qwen or {}).get("html") or b.get("html") or b.get("content") or ""
+                )
                 out.append({"type": "table", "table_body": html, "page_idx": page_idx})
             else:
-                out.append({"type": "text", "text": b.get("content", ""), "page_idx": page_idx})
+                out.append(
+                    {"type": "text", "text": b.get("content", ""), "page_idx": page_idx}
+                )
         for leftover in qwen_iter:
             if leftover.get("html"):
-                out.append({"type": "table", "table_body": leftover["html"], "page_idx": max(page - 1, 0)})
+                out.append(
+                    {
+                        "type": "table",
+                        "table_body": leftover["html"],
+                        "page_idx": max(page - 1, 0),
+                    }
+                )
 
-    for page in sorted(k for k in qwen_by_page if isinstance(k, int) and k not in pages):
+    for page in sorted(
+        k for k in qwen_by_page if isinstance(k, int) and k not in pages
+    ):
         for t in qwen_by_page[page]:
             if t.get("html"):
-                out.append({"type": "table", "table_body": t["html"], "page_idx": max(page - 1, 0)})
+                out.append(
+                    {
+                        "type": "table",
+                        "table_body": t["html"],
+                        "page_idx": max(page - 1, 0),
+                    }
+                )
 
     for t in qwen_no_page:
         if t.get("html"):
@@ -554,7 +646,9 @@ def build_pdf_content_blocks(blocks: list[dict], qwen_tables: list[dict]) -> lis
     return out
 
 
-def append_image_items(content_blocks: list[dict], image_items: list[dict]) -> list[dict]:
+def append_image_items(
+    content_blocks: list[dict], image_items: list[dict]
+) -> list[dict]:
     """Gộp ảnh MinerU vào content_list theo page: cùng trang thì ảnh xếp sau
     text/bảng; DOCX (page_idx None) thì toàn bộ ảnh xếp sau text/bảng."""
     block_pages: dict[Any, list[dict]] = {}
@@ -575,7 +669,10 @@ def append_image_items(content_blocks: list[dict], image_items: list[dict]) -> l
 
 
 async def rebuild_pdf_content_list(
-    mineru_list: list[dict], file_bytes: bytes, extractor: BackendDataExtractor, filename: str = "document.pdf"
+    mineru_list: list[dict],
+    file_bytes: bytes,
+    extractor: BackendDataExtractor,
+    filename: str = "document.pdf",
 ) -> list[dict]:
     image_items = [it for it in mineru_list or [] if it.get("type") == "image"]
     blocks = await asyncio.to_thread(extractor.extract_pdf_blocks, file_bytes)
@@ -611,9 +708,13 @@ async def rebuild_docx_content_list(
     content_blocks: list[dict] = []
     for b in doc_blocks:
         if b["type"] == "table":
-            content_blocks.append({"type": "table", "table_body": b.get("html") or "", "page_idx": None})
+            content_blocks.append(
+                {"type": "table", "table_body": b.get("html") or "", "page_idx": None}
+            )
         else:
-            content_blocks.append({"type": "text", "text": b.get("content", ""), "page_idx": None})
+            content_blocks.append(
+                {"type": "text", "text": b.get("content", ""), "page_idx": None}
+            )
     return append_image_items(content_blocks, image_items)
 
 
@@ -629,7 +730,9 @@ async def rebuild_content_list(
     except Exception:
         return None
     if ext == ".pdf":
-        return await rebuild_pdf_content_list(mineru_list, file_bytes, extractor, filename=path.name)
+        return await rebuild_pdf_content_list(
+            mineru_list, file_bytes, extractor, filename=path.name
+        )
     if ext in (".docx", ".doc"):
         return await rebuild_docx_content_list(mineru_list, file_bytes, extractor)
     return None

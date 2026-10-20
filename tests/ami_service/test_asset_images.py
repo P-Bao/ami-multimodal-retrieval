@@ -66,7 +66,17 @@ def test_list_doc_images_empty_doc():
 
 def test_list_doc_images_ext_subset_matches_crawl_exts():
     # .webm/.mp4 (crawl “ảnh”/media) và .bmp/.tiff đều nằm trong IMAGE_EXTENSIONS
-    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".webm", ".mp4"):
+    for ext in (
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".webm",
+        ".mp4",
+    ):
         assert ext in IMAGE_EXTENSIONS
 
 
@@ -82,6 +92,10 @@ def test_presign_doc_images_skips_failures():
 
 
 def test_presign_doc_images_all_fail_or_none():
-    store = _store(StubMinioClient(["rag-assets/d1/a.png"], fail_presign_for={"rag-assets/d1/a.png"}))
+    store = _store(
+        StubMinioClient(
+            ["rag-assets/d1/a.png"], fail_presign_for={"rag-assets/d1/a.png"}
+        )
+    )
     assert store.list_doc_images("d1") == ["rag-assets/d1/a.png"]
     assert store.presign_doc_images("d1") == []

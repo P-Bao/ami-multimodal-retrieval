@@ -6,7 +6,17 @@ from io import BytesIO
 from pathlib import Path
 
 ASSET_TYPES = ("image", "table", "equation")
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".webm", ".mp4")
+IMAGE_EXTENSIONS = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".webm",
+    ".mp4",
+)
 CONTENT_LIST_NAME = "content_list.json"
 
 _MINIO_POOL_MAXSIZE = 16
@@ -79,7 +89,9 @@ class MinioAssetStore:
         self._get_client().fget_object(self._bucket, object_name, str(dest))
         return dest
 
-    def upload_content_list_assets(self, doc_id: str, content_list: list[dict]) -> list[str]:
+    def upload_content_list_assets(
+        self, doc_id: str, content_list: list[dict]
+    ) -> list[str]:
         """Upload local image files referenced by `img_path`; set `item["asset_key"]`.
 
         Returns the uploaded object keys. Items without a readable `img_path` are left
@@ -98,14 +110,17 @@ class MinioAssetStore:
                 continue
             data = path.read_bytes()
             ext = path.suffix.lower() or ".png"
-            key = f"{self.doc_prefix(doc_id)}{hashlib.sha256(data).hexdigest()[:16]}{ext}"
+            key = (
+                f"{self.doc_prefix(doc_id)}{hashlib.sha256(data).hexdigest()[:16]}{ext}"
+            )
             if key not in keys:
                 client.put_object(
                     self._bucket,
                     key,
                     BytesIO(data),
                     length=len(data),
-                    content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                    content_type=mimetypes.guess_type(path.name)[0]
+                    or "application/octet-stream",
                 )
                 keys.append(key)
             item["asset_key"] = key
@@ -212,4 +227,3 @@ class MinioAssetStore:
             client.remove_object(self._bucket, obj.object_name)
             removed += 1
         return removed
-

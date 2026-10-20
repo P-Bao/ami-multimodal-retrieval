@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     # else -> none (mô tả thô: caption + footnotes + ngữ cảnh, không gọi LLM).
     # Legacy "text" (OCR-ảnh text-only) đã bị xoá -> tự chuyển "none" kèm warning.
     IMAGE_DESCRIBE_MODE: str = "auto"
-    CAPTION_LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    CAPTION_LLM_BASE_URL: str = (
+        "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
     CAPTION_LLM_MODEL: str = "gemini-2.5-flash-lite"
     # API key CHỈ từ env (.env / biến môi trường) - không commit vào repo
     CAPTION_LLM_API_KEY: str = ""
@@ -54,7 +56,7 @@ class Settings(BaseSettings):
     # Dùng để xác minh với server lúc handshake (dim thực tế do server quyết định)
     EMBED_DIM: int = 1024
     EMBED_TIMEOUT: int = 60
-    EMBED_BATCH_SIZE: int = 32          # server giới hạn tối đa 64 text/request
+    EMBED_BATCH_SIZE: int = 32  # server giới hạn tối đa 64 text/request
     EMBED_MAX_CONCURRENCY: int = 4
     EMBED_RETRIES: int = 3
     EMBED_CACHE_ENABLED: bool = True
@@ -118,10 +120,16 @@ class Settings(BaseSettings):
     # `hybrid-engine` (MinerU 3.4.x default when -b is omitted) peaks at ~14.5 GiB in ~286 s,
     # so always pass a backend.
     MINERU_BACKEND: str = "pipeline"
-    MINERU_DEVICE: str = ""  # "" = auto; cuda | cuda:0 | cpu (-> env MINERU_DEVICE_MODE)
-    MINERU_VIRTUAL_VRAM_SIZE: int = 0  # GB the parser may assume; 0 = auto (use GPU's real VRAM)
+    MINERU_DEVICE: str = (
+        ""  # "" = auto; cuda | cuda:0 | cpu (-> env MINERU_DEVICE_MODE)
+    )
+    MINERU_VIRTUAL_VRAM_SIZE: int = (
+        0  # GB the parser may assume; 0 = auto (use GPU's real VRAM)
+    )
     MINERU_LANG: str = ""  # OCR language hint (ch, en, latin, ...); "" = MinerU default
-    MINERU_SOURCE: str = ""  # model source: huggingface | modelscope | local; "" = default
+    MINERU_SOURCE: str = (
+        ""  # model source: huggingface | modelscope | local; "" = default
+    )
     MINERU_TIMEOUT: int = 1800  # seconds per document; 0 = no limit
 
     CHUNK_SIZE: int = 1200
@@ -276,6 +284,7 @@ def resolve_ocr_fallback_modes(settings) -> frozenset[str]:
             )
         modes.add(part)
     return frozenset(modes)
+
 
 def parser_kwargs(settings) -> dict:
     """Extra kwargs for `RAGAnything.parse_document` derived from MINERU_* settings.

@@ -4,6 +4,7 @@
 đều giả bằng ``httpx.MockTransport``. PDF test dựng bằng PyMuPDF (trang trắng,
 không text layer) để lớp PyMuPDF local không can thiệp kết quả.
 """
+
 import fitz
 import httpx
 import pytest
@@ -39,22 +40,30 @@ BLANK_PDF = _blank_pdf()
 # ---------------------------------------------------------------------------
 def primary_error(status: int = 500):
     """OCR service chính giả: mọi endpoint đều trả lỗi HTTP."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status, text=f"primary boom {status}")
+
     return handler
 
 
 def primary_text(text: str):
     """hierarchy-parse giả: trả cây content với 1 node text (rỗng nếu ``text``="")."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"content": ({"text": text} if text else {}), "text": text})
+        return httpx.Response(
+            200, json={"content": ({"text": text} if text else {}), "text": text}
+        )
+
     return handler
 
 
 def primary_tables(tables: list):
     """raw_miner_ocr/qwen giả: trả danh sách bảng (có thể rỗng)."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"tables": tables})
+
     return handler
 
 
@@ -64,14 +73,21 @@ VINTER_TABLE_HTML = "<table><tr><td>v</td></tr></table>"
 class FakeVinter:
     """Gateway vintern-vllm giả: POST /v1/ocr (multipart), route theo ``mode``."""
 
-    def __init__(self, *, text_body: dict | None = None, table_body: dict | None = None,
-                 status: int = 200):
+    def __init__(
+        self,
+        *,
+        text_body: dict | None = None,
+        table_body: dict | None = None,
+        status: int = 200,
+    ):
         self.text_body = text_body or {
-            "pages": 1, "text": "VINTER TEXT",
+            "pages": 1,
+            "text": "VINTER TEXT",
             "page_texts": [{"page": 1, "text": "VINTER TEXT"}],
         }
         self.table_body = table_body or {
-            "pages": 1, "tables": [{"page": 1, "html": VINTER_TABLE_HTML, "markdown": "| v |"}],
+            "pages": 1,
+            "tables": [{"page": 1, "html": VINTER_TABLE_HTML, "markdown": "| v |"}],
         }
         self.status = status
         self.requests: list[bytes] = []
@@ -96,7 +112,9 @@ def make_extractor(primary_handler, vinter: FakeVinter | None = None, **kwargs):
             "http://vinter:8090",
             model="5CD-AI/Vintern-1B-v3_5",
             retries=0,
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(vinter.handler)),
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(vinter.handler)
+            ),
         )
     return BackendDataExtractor(
         base_url="http://primary:12006",
@@ -198,7 +216,11 @@ async def test_tables_primary_ok_skips_fallback():
     primary_tables_ok = [{"page": 1, "html": "<table><tr><td>q</td></tr></table>"}]
     extractor = make_extractor(primary_tables(primary_tables_ok), vinter)
     assert await extractor.extract_tables(BLANK_PDF) == [
-        {"page": 1, "html": "<table><tr><td>q</td></tr></table>", "raw_response": primary_tables_ok[0]}
+        {
+            "page": 1,
+            "html": "<table><tr><td>q</td></tr></table>",
+            "raw_response": primary_tables_ok[0],
+        }
     ]
     assert vinter.requests == []
 
@@ -225,7 +247,11 @@ def test_build_vinter_ocr_client_disabled_or_empty_url():
     assert build_vinter_ocr_client(Settings(OCR_FALLBACK_URL="   ")) is None
 
     client = build_vinter_ocr_client(
-        Settings(OCR_FALLBACK_URL="http://may-b:8090", OCR_FALLBACK_TOKEN="secret", OCR_FALLBACK_RETRIES=2)
+        Settings(
+            OCR_FALLBACK_URL="http://may-b:8090",
+            OCR_FALLBACK_TOKEN="secret",
+            OCR_FALLBACK_RETRIES=2,
+        )
     )
     assert isinstance(client, VinterOcrClient)
     assert client._base_url == "http://may-b:8090"
@@ -236,8 +262,12 @@ def test_build_vinter_ocr_client_disabled_or_empty_url():
 def test_resolve_ocr_fallback_modes():
     assert resolve_ocr_fallback_modes(Settings()) == frozenset({"text", "table"})
     assert resolve_ocr_fallback_modes(Settings(OCR_FALLBACK_MODES="")) == frozenset()
-    assert resolve_ocr_fallback_modes(Settings(OCR_FALLBACK_MODES=" table ")) == frozenset({"table"})
-    assert resolve_ocr_fallback_modes(Settings(OCR_FALLBACK_MODES="text;text")) == frozenset({"text"})
+    assert resolve_ocr_fallback_modes(
+        Settings(OCR_FALLBACK_MODES=" table ")
+    ) == frozenset({"table"})
+    assert resolve_ocr_fallback_modes(
+        Settings(OCR_FALLBACK_MODES="text;text")
+    ) == frozenset({"text"})
     with pytest.raises(ValueError, match="bogus"):
         resolve_ocr_fallback_modes(Settings(OCR_FALLBACK_MODES="text,bogus"))
 
@@ -265,10 +295,17 @@ def _client(handler, retries: int = 0) -> VinterOcrClient:
 
 
 async def test_client_ocr_text_merges_page_texts():
-    vinter = FakeVinter(text_body={
-        "pages": 3, "text": "GỘP CẢ LÔ",
-        "page_texts": [{"page": 1, "text": "P1"}, {"page": 2, "text": " P2 "}, {"page": 3, "text": ""}],
-    })
+    vinter = FakeVinter(
+        text_body={
+            "pages": 3,
+            "text": "GỘP CẢ LÔ",
+            "page_texts": [
+                {"page": 1, "text": "P1"},
+                {"page": 2, "text": " P2 "},
+                {"page": 3, "text": ""},
+            ],
+        }
+    )
     # giữ thứ tự trang do gateway trả (đã sort); trang rỗng bị bỏ, strip từng phần
     assert await _client(vinter.handler).ocr_text(BLANK_PDF) == "P1\n\nP2"
 
@@ -285,12 +322,17 @@ async def test_client_ocr_text_empty_raises():
 
 
 async def test_client_ocr_tables_normalizes():
-    vinter = FakeVinter(table_body={"pages": 2, "tables": [
-        {"page": 1, "html": "<table>ok</table>", "markdown": "| ok |"},
-        {"page": "2", "html": "   "},                       # html rỗng -> bỏ
-        {"html": "<table>x</table>"},                        # page None
-        {"page": "abc", "html": "<table>y</table>"},         # page lạ -> None
-    ]})
+    vinter = FakeVinter(
+        table_body={
+            "pages": 2,
+            "tables": [
+                {"page": 1, "html": "<table>ok</table>", "markdown": "| ok |"},
+                {"page": "2", "html": "   "},  # html rỗng -> bỏ
+                {"html": "<table>x</table>"},  # page None
+                {"page": "abc", "html": "<table>y</table>"},  # page lạ -> None
+            ],
+        }
+    )
     tables = await _client(vinter.handler).ocr_tables(BLANK_PDF)
     assert tables == [
         {"page": 1, "html": "<table>ok</table>"},

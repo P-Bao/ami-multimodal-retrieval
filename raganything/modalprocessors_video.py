@@ -672,4 +672,3 @@ class VideoModalProcessor(BaseModalProcessor):
             f"Entity: {section['entity_info']['entity_name']}\n"
             f"Analysis:\n{section['description']}"
         )
-

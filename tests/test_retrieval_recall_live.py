@@ -46,7 +46,9 @@ def _build_params():
     for c in cases:
         marks = []
         if c.get("xfail"):
-            marks.append(pytest.mark.xfail(reason=c.get("xfail_reason") or "Expected low recall"))
+            marks.append(
+                pytest.mark.xfail(reason=c.get("xfail_reason") or "Expected low recall")
+            )
         params.append(pytest.param(c, id=f"{c['modality']}-{c['id']}", marks=marks))
     return params
 
@@ -195,7 +197,9 @@ def test_retrieval_summary_report():
     print("\n" + "=" * 75)
     print("           RETRIEVAL RECALL (HIT@5, HIT@20, HIT@40) & MRR SUMMARY REPORT")
     print("=" * 75)
-    print(f"{'K':<5} | {'MODALITY':<8} | {'HIT / TOTAL':<12} | {'HIT RATE':<10} | {'MRR':<8}")
+    print(
+        f"{'K':<5} | {'MODALITY':<8} | {'HIT / TOTAL':<12} | {'HIT RATE':<10} | {'MRR':<8}"
+    )
     print("-" * 75)
     for k in ks:
         k_res = results[k]
@@ -207,21 +211,37 @@ def test_retrieval_summary_report():
             tot = stats["total"]
             pct = (hit / tot * 100) if tot > 0 else 0.0
             mrr = (stats["rr_sum"] / tot) if tot > 0 else 0.0
-            print(f"@{k:<4} | {modality.upper():<8} | {hit}/{tot:<10} | {pct:6.1f}%    | {mrr:.4f}")
+            print(
+                f"@{k:<4} | {modality.upper():<8} | {hit}/{tot:<10} | {pct:6.1f}%    | {mrr:.4f}"
+            )
         overall_pct = (total_hits / total_cases * 100) if total_cases > 0 else 0.0
         overall_mrr = (total_rr / total_cases) if total_cases > 0 else 0.0
-        print(f"@{k:<4} | {'OVERALL':<8} | {total_hits}/{total_cases:<10} | {overall_pct:6.1f}%    | {overall_mrr:.4f}")
+        print(
+            f"@{k:<4} | {'OVERALL':<8} | {total_hits}/{total_cases:<10} | {overall_pct:6.1f}%    | {overall_mrr:.4f}"
+        )
         print("-" * 75)
     print("=" * 75 + "\n")
 
     # Assertions for Hit@5 baseline
-    assert results[5]["text"]["hit"] >= 8, "Text retrieval should hit at least 8/10 at top 5"
-    assert results[5]["table"]["hit"] >= 3, "Table retrieval should hit at least 3/9 at top 5"
-    assert results[5]["image"]["hit"] >= 1, "Image retrieval should hit at least 1/9 at top 5"
+    assert (
+        results[5]["text"]["hit"] >= 8
+    ), "Text retrieval should hit at least 8/10 at top 5"
+    assert (
+        results[5]["table"]["hit"] >= 3
+    ), "Table retrieval should hit at least 3/9 at top 5"
+    assert (
+        results[5]["image"]["hit"] >= 1
+    ), "Image retrieval should hit at least 1/9 at top 5"
 
     # Assertions for Hit@20 expansion
-    assert results[20]["table"]["hit"] >= 5, "Table retrieval should hit at least 5/9 at top 20"
+    assert (
+        results[20]["table"]["hit"] >= 5
+    ), "Table retrieval should hit at least 5/9 at top 20"
 
     # Assertions for Hit@40 expansion
-    assert results[40]["table"]["hit"] >= 7, "Table retrieval should hit at least 7/9 at top 40"
-    assert results[40]["text"]["hit"] == 10, "Text retrieval should achieve 10/10 at top 40"
+    assert (
+        results[40]["table"]["hit"] >= 7
+    ), "Table retrieval should hit at least 7/9 at top 40"
+    assert (
+        results[40]["text"]["hit"] == 10
+    ), "Text retrieval should achieve 10/10 at top 40"

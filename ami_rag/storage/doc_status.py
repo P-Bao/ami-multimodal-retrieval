@@ -99,21 +99,28 @@ class DocStatusStore:
         return list(self._col.find())
 
     def counts(self) -> dict:
-        return {doc["_id"] or "unknown": doc["count"] for doc in self._col.aggregate(
-            [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
-        )}
+        return {
+            doc["_id"] or "unknown": doc["count"]
+            for doc in self._col.aggregate(
+                [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
+            )
+        }
 
     def failed_rows(self) -> list[dict]:
         return list(self._col.find({"status": STATUS_FAILED}))
 
     def stale_rows(self) -> list[dict]:
         """Bao gồm cả legacy `processed` (pipeline cũ -> stale)."""
-        return list(self._col.find({"status": {"$in": [STATUS_STALE, LEGACY_PROCESSED]}}))
+        return list(
+            self._col.find({"status": {"$in": [STATUS_STALE, LEGACY_PROCESSED]}})
+        )
 
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
-    def ensure_pending(self, doc_id: str, source_path: str = "", content_hash: str = "") -> None:
+    def ensure_pending(
+        self, doc_id: str, source_path: str = "", content_hash: str = ""
+    ) -> None:
         """Tạo bản ghi `pending` nếu chưa có (scan/quét dữ liệu cũ)."""
         now = self._now()
         self._col.update_one(
@@ -159,7 +166,11 @@ class DocStatusStore:
         meta: dict | None = None,
     ) -> None:
         """Chuyển doc sang `processing` ở `stage`; giữ nguyên các trường khác."""
-        updates: dict = {"status": STATUS_PROCESSING, "stage": stage, "updated_at": self._now()}
+        updates: dict = {
+            "status": STATUS_PROCESSING,
+            "stage": stage,
+            "updated_at": self._now(),
+        }
         if source_path is not None:
             updates["source_path"] = source_path
         if content_hash is not None:
@@ -255,7 +266,9 @@ class DocStatusStore:
             updates.update(meta)
         self._col.update_one({"_id": doc_id}, {"$set": updates}, upsert=True)
 
-    def begin_attempt(self, doc_id: str, content_hash: str | None = None, **stage_meta) -> int:
+    def begin_attempt(
+        self, doc_id: str, content_hash: str | None = None, **stage_meta
+    ) -> int:
         """Đánh dấu doc bắt đầu xử lý (processing + stage parse) và +1 attempts."""
         self.mark_stage(doc_id, STAGE_PARSE, content_hash=content_hash, **stage_meta)
         self._col.update_one(
@@ -273,10 +286,16 @@ class DocStatusStore:
             {"$inc": {"attempts": -1}},
         )
         row = self.get(doc_id)
-        if row and row.get("status") == STATUS_PROCESSING and not row.get("content_hash"):
+        if (
+            row
+            and row.get("status") == STATUS_PROCESSING
+            and not row.get("content_hash")
+        ):
             self._col.delete_one({"_id": doc_id, "status": STATUS_PROCESSING})
 
-    def mark_failed(self, doc_id: str, error: str, stage: str, *, increment_attempt: bool = True) -> None:
+    def mark_failed(
+        self, doc_id: str, error: str, stage: str, *, increment_attempt: bool = True
+    ) -> None:
         updates: dict = {
             "status": STATUS_FAILED,
             "error": error[:2000],
@@ -286,13 +305,20 @@ class DocStatusStore:
         if increment_attempt:
             self._col.update_one(
                 {"_id": doc_id},
-                {"$set": updates, "$inc": {"attempts": 1}, "$setOnInsert": {"created_at": self._now()}},
+                {
+                    "$set": updates,
+                    "$inc": {"attempts": 1},
+                    "$setOnInsert": {"created_at": self._now()},
+                },
                 upsert=True,
             )
         else:
             self._col.update_one(
                 {"_id": doc_id},
-                {"$set": updates, "$setOnInsert": {"created_at": self._now(), "attempts": 0}},
+                {
+                    "$set": updates,
+                    "$setOnInsert": {"created_at": self._now(), "attempts": 0},
+                },
                 upsert=True,
             )
 

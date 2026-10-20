@@ -382,4 +382,3 @@ class AudioModalProcessor(BaseModalProcessor):
             f"Entity: {section['entity_info']['entity_name']}\n"
             f"Transcription:\n{section['description']}"
         )
-
