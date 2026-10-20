@@ -351,6 +351,15 @@ def test_chunk_text_no_orphan_chunk_below_min_chars():
     assert any("Địa chỉ: Tầng 1 nhà A1" in c for c in chunks)
 
 
+def test_merge_small_absorbs_trailing_orphan():
+    """Chunk cuối quá ngắn (chunk trước đã đầy) -> gộp đuôi dù hơi vượt budget."""
+    from ami_rag.core.vector_pipeline import _merge_small
+
+    out = _merge_small(["B" * 300, "- Địa chỉ: nhà A1"], max_chars=512, min_chars=200)
+    assert len(out) == 1
+    assert out[0].endswith("- Địa chỉ: nhà A1")
+
+
 def test_chunk_text_min_chars_keeps_small_document_intact():
     """Văn bản nhỏ hơn ngưỡng thì giữ nguyên 1 chunk (không gộp bừa)."""
     chunks = chunk_text("Địa chỉ: nhà A1", max_tokens=1200, overlap_tokens=0)

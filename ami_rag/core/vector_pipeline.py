@@ -327,7 +327,13 @@ def _merge_small(chunks: list[str], max_chars: int, min_chars: int) -> list[str]
         out.append(pending)
         pending = cur
     if pending is not None:
-        out.append(pending)
+        # shortcut: chunk cuối vẫn quá ngắn (chunk trước đã đầy budget) -> gộp đuôi
+        # dù hơi vượt max_chars: chunk mồ côi một dòng tệ hơn chunk hơi dài
+        # (embed server tự head-truncate input, content đầy đủ vẫn ở payload).
+        if out and len(pending) < min_chars:
+            out[-1] = f"{out[-1]}\n{pending}"
+        else:
+            out.append(pending)
     return out
 
 
