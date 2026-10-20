@@ -31,6 +31,8 @@ _IMAGE_EXTS = (
 )
 
 
+# shortcut: tắt verify SSL cho 2 domain trường (chuỗi chứng chỉ gãy) - chấp nhận
+# rủi ro MITM vì chỉ crawl 2 nguồn nội bộ này; chặt hơn thì pin issuer cert.
 _TRUSTED_NO_SSL_VERIFY_DOMAINS = (
     "ptit.edu.vn",
     "ptithcm.edu.vn",

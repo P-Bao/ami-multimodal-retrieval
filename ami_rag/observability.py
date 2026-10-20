@@ -54,6 +54,10 @@ REQUESTS_TOTAL = Counter(
     "Total number of retrieval requests.",
     ["mode"],
 )
+# shortcut: nhãn `day`/`hod` sinh series mới mỗi ngày (1/ngày, 24/ngày cho
+# day+hour) và không bao giờ hết hạn - chấp nhận vì corpus nội bộ và dashboard
+# drill-down theo ngày dùng chúng; khi Prometheus phình to, bỏ 3 counter này
+# và cho Grafana group theo time thay vì label.
 REQUESTS_BY_DAY = Counter(
     "multimodal_rag_retrieval_requests_by_day",
     "Retrieval requests per calendar day (Asia/Ho_Chi_Minh). Dashboard timezone MUST match.",
