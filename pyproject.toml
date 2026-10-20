@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "huggingface_hub",
-    "mineru[core]>=3.4.1,<4",
+    "mineru[core]>=3.4.1,<5",
     "tqdm",
 ]
 
