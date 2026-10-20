@@ -800,7 +800,38 @@ Lỗi đã biết, **pre-existing**, không thuộc scope thay đổi:
 - 4 lỗi trong `tests/test_gateway_parity.py`: test cần repo gateway `nemotron-vl-vllm` (ngoài máy) — thiếu repo nên fail, không phải do code RAG.
 - Lỗi ruff ở `tests/test_audio_processor.py` và `tests/test_video_processor.py`: nằm ngoài `tests/ami_service`, không thuộc lệnh lint service.
 
-Ngoài ra có test **live** (`tests/test_retrieval_recall_live.py`, bộ case `tests/retrieval_cases.json`): tự skip nếu API `/readyz` không trả 200, chạy `Hit@5` / `Hit@20` / `Hit@40` + MRR theo modality. Khi muốn đo trước/sau một thay đổi chunk/caption thì chạy bộ này (index phải đã reindex) hoặc `scripts/diagnose_query.py` cho từng query.
+### 10.1 Test live retrieval (Hit@k + MRR)
+
+`tests/test_retrieval_recall_live.py` gọi API thật `POST /v2/rag/` với bộ case `tests/retrieval_cases.json` và đo `Hit@5` / `Hit@20` / `Hit@40` + MRR theo modality (text/table/image).
+
+Điều kiện:
+- Stack ami-rag sống (API + Qdrant + embed + rerank), `/readyz` trả 200.
+- Index đã reindex theo collection hiện tại (`EMBED_MODEL` + `CHUNKER_VERSION`); mỗi case trỏ `expected_doc_id`.
+- Thiếu stack → test **skip**, không fail. CI chạy `-m "not live"` nên không gọi mạng.
+
+Env (test đọc trực tiếp `os.environ`; pytest **không** tự nạp `.env` — `export` hoặc `uv run --env-file .env`):
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `RAG_BASE_URL` | `http://localhost:8009` | gốc API |
+| `RAG_API_KEY` | rỗng | bearer nếu API bật auth |
+| `RAG_TIMEOUT` | `60` | timeout mỗi request (giây) |
+
+Lệnh:
+
+```bash
+export RAG_BASE_URL=http://localhost:8009 RAG_API_KEY=... RAG_TIMEOUT=60
+uv run pytest -q -m live tests/test_retrieval_recall_live.py   # hoac make test-live
+uv run pytest -q -m live tests/test_retrieval_recall_live.py -k summary  # chi bang tong hop
+```
+
+- "Hit" = top-k chứa đúng `expected_doc_id`; **không** so `expected_chunk_id` (hash MD5 đổi sau mỗi lần reindex / đổi caption → MISS giả).
+- Case có `xfail: true` trong JSON là case kỳ vọng chưa trúng; `xfail_reason` giải thích. Bỏ `xfail` khi index đã cải thiện.
+- `test_retrieval_summary_report` in bảng Hit@k/MRR theo modality và assert ngưỡng baseline (text/table/image). Ngưỡng gắn với dataset hiện tại — sửa `retrieval_cases.json` thì cập nhật assert.
+- Xuất kết quả từng case: `python scripts/export_live_results.py --output result.json [--top-k N]` (dùng chung `run_case`, cùng cách tính Hit).
+- Chẩn đoán 1 query rơi ở tầng nào: `python scripts/diagnose_query.py --query "..."`.
+
+Khi muốn đo trước/sau một thay đổi chunk/caption: chạy bộ live này (index phải đã reindex) rồi đối chiếu Hit@k/MRR.
 
 ## 11. Phiên bản
 
