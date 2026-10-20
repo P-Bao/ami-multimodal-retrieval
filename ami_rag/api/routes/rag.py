@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import time
 
@@ -77,7 +78,10 @@ async def verify_api_key(authorization: str = Header(default="")):
     if not settings.RAG_API_KEY:
         return
     token = authorization.replace("Bearer ", "").strip()
-    if token != settings.RAG_API_KEY:
+    # compare_digest chống đo thời gian; encode utf-8 vì compare_digest chỉ nhận ASCII str
+    if not hmac.compare_digest(
+        token.encode("utf-8"), settings.RAG_API_KEY.encode("utf-8")
+    ):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
