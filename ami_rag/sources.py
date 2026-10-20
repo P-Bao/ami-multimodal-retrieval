@@ -20,6 +20,15 @@ def select_source(doc: dict) -> str:
     return SOURCE_MINIO_PARSE
 
 
+def is_crawl_doc(doc: dict | None) -> bool:
+    """Doc crawl = text Mongo, không có file gốc, có ``metadata.source_url``."""
+    if not doc or doc.get("file_path"):
+        return False
+    return select_source(doc) == SOURCE_MONGO_TEXT and bool(
+        (doc.get("metadata") or {}).get("source_url")
+    )
+
+
 def source_hash(doc: dict, source: str | None = None) -> str:
     """Stable fingerprint of what the pipeline ingests for this document.
 

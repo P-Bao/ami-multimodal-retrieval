@@ -449,7 +449,7 @@ Field của mỗi document (`RetrievedDocV2`):
 - `doc`: document đã resolve qua Mongo (`resolver.resolve_doc_id`) — `{document_id, title, document_type, organization_unit_id, file_url, source_url}`; không resolve được → `null`.
 - `reference_id`: chunk id.
 - `artifact_url`: presigned URL (hết hạn sau `MINIO_PRESIGN_EXPIRES`) của `asset_key`; `null` khi chunk không có asset hoặc presign lỗi (tăng `presign_failures_total`).
-- `artifact_urls`: presigned của **mọi ảnh của doc** (`asset_store.presign_doc_images` — ảnh crawl section `Hình ảnh` + ảnh pdf/table, mục 2). Trả cho cả chunk text (kết quả chỉ-text vẫn kèm đường dẫn ảnh của doc); doc không resolve được qua Mongo hoặc store lỗi/missing method → `[]` (key giữ nguyên shape).
+- `artifact_urls`: presigned của **mọi ảnh của doc crawl** (`asset_store.presign_doc_images` — ảnh crawl section `Hình ảnh`, mục 2), trả cho cả chunk text của doc. Chỉ áp dụng doc crawl (`original_file_name` rỗng/`.txt`, **không có** `file_path`, **và** `metadata.source_url` khác rỗng); doc PDF/upload/seed text → `[]`, không list MinIO. Doc không resolve được qua Mongo hoặc store lỗi/missing method → `[]` (key giữ nguyên shape). `artifact_url` của chunk vẫn trả riêng cho mọi modality có `asset_key`.
 - `table_body`: markdown của bảng (modality `table`); `page`, `caption`: trang và caption của item.
 
 `references`: danh sách `doc` dedup theo `document_id`, chỉ có khi `include_references: true`. `meta`: `latency_ms`, `requested_top_k`, `returned`, `candidates` (số ứng viên tầng vector), `fusion` = `raw` | `rrf` | `empty` (cấu hình rerank fusion đã áp dụng).

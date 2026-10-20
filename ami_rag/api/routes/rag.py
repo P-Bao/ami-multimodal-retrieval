@@ -188,9 +188,13 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
         modality = chunk.get("modality") or "text"
         page = chunk.get("page")
         artifact_urls: list[str] = []
-        if resolved is not None and asset_store is not None:
-            # 1 lần list MinIO per doc_id mỗi request (trước đây N chunk cùng
-            # doc list N lần); cache per-request nên URL luôn mới.
+        if (
+            resolved is not None
+            and asset_store is not None
+            and await resolver.is_crawl_doc_id(doc_id)
+        ):
+            # Chỉ doc crawl mới trả danh sách ảnh của doc. 1 lần list MinIO
+            # per doc_id mỗi request; cache per-request nên URL luôn mới.
             if doc_id not in urls_cache:
                 try:
                     urls_cache[doc_id] = await asyncio.to_thread(

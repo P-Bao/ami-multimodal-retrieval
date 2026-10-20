@@ -2,6 +2,7 @@ import asyncio
 from datetime import timedelta
 
 from ami_rag.observability import PRESIGN_FAILURES_TOTAL
+from ami_rag.sources import is_crawl_doc
 from ami_rag.storage.assets import minio_http_client
 
 _MINIO_HTTP_TIMEOUT_SECONDS = 3
@@ -80,12 +81,7 @@ class DocResolver:
             PRESIGN_FAILURES_TOTAL.inc()
             return None
 
-    async def resolve_doc_id(self, doc_id: str) -> dict | None:
-        """Resolve a Mongo document id directly (vector chunks carry doc_id).
-
-        Cache chỉ giữ field Mongo (ít đổi); file_url presigned chỉ sống
-        ``presign_expires`` giây nên presign lại mỗi call - không cache URL.
-        """
+    async def _get_doc(self, doc_id: str) -> dict | None:
         if not doc_id:
             return None
         cache_key = f"id:{doc_id}"
@@ -95,7 +91,19 @@ class DocResolver:
             except Exception:
                 doc = None
             self._cache[cache_key] = doc
-        doc = self._cache[cache_key]
+        return self._cache[cache_key]
+
+    async def is_crawl_doc_id(self, doc_id: str) -> bool:
+        """Doc crawl (Mongo text + source_url); đọc cache của ``resolve_doc_id``."""
+        return is_crawl_doc(await self._get_doc(doc_id))
+
+    async def resolve_doc_id(self, doc_id: str) -> dict | None:
+        """Resolve a Mongo document id directly (vector chunks carry doc_id).
+
+        Cache chỉ giữ field Mongo (ít đổi); file_url presigned chỉ sống
+        ``presign_expires`` giây nên presign lại mỗi call - không cache URL.
+        """
+        doc = await self._get_doc(doc_id)
         if doc is None:
             return None
         file_url = None
