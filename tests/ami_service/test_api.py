@@ -291,9 +291,10 @@ async def test_auth_required_when_key_configured(client, monkeypatch):
         "/v2/rag/", json=BODY, headers={"Authorization": "Bearer secret-key"}
     )
     assert resp.status_code == 200
-    # token lạ (kể cả non-ASCII) -> 401, không 500 (compare_digest trên bytes)
+    # token lạ (non-ASCII sau khi decode latin-1) -> 401, không 500
+    # (compare_digest chạy trên bytes; httpx chặn header str non-ASCII)
     resp = await client.post(
-        "/v2/rag/", json=BODY, headers={"Authorization": "Bearer clé-secrète"}
+        "/v2/rag/", json=BODY, headers={"Authorization": b"Bearer cl\xe9"}
     )
     assert resp.status_code == 401
 
