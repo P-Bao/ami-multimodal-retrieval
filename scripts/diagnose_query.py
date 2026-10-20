@@ -65,7 +65,7 @@ async def run_diagnose(args: argparse.Namespace) -> dict:
     print(f"query      : {args.query!r}")
     print(f"embedder   : {type(pipeline.embedder).__name__} model={settings.EMBED_MODEL}")
     print(f"rerank     : backend={backend} fusion={fusion} multimodal={multimodal}")
-    print(f"candidates : max({settings.RETRIEVAL_CHUNK_TOP_K}, {args.top_k}*{settings.RETRIEVAL_OVERFETCH}"
+    print(f"candidates : max({settings.RETRIEVAL_CHUNK_TOP_K}, {args.top_k}*2"
           f", {args.candidates}) = {args.candidates}")
 
     vector = await pipeline.embedder.embed_query(args.query)
