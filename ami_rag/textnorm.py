@@ -16,6 +16,15 @@ def fold_text(text: str) -> str:
     return "".join(c for c in normalized if not unicodedata.combining(c)).lower()
 
 
+def join_caption(value) -> str:
+    """Caption/list caption -> chuỗi (None/rỗng -> ""); nơi cần None bọc thêm ``or None``."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v) for v in value if v)
+    return str(value)
+
+
 def strip_markdown_prefix(text: str) -> str:
     """Bỏ ký tự markdown ở đầu chuỗi (heading/bullet/table pipe)."""
     return (text or "").lstrip(_MD_PREFIX)

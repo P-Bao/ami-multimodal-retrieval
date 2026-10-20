@@ -26,6 +26,7 @@ from ami_rag.core.embedder import (
     EmbedModelMismatch,
     EmbedServerUnreachable,
     clamp_embed_text,
+    image_mime,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,19 +34,9 @@ logger = logging.getLogger(__name__)
 __all__ = ["OpenAIEmbedder", "build_openai_embedder", "data_url_from_bytes"]
 
 
-def _image_mime(data: bytes) -> str:
-    if data.startswith(b"\x89PNG"):
-        return "image/png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    if data[:3] == b"GIF":
-        return "image/gif"
-    return "image/jpeg"
-
-
 def data_url_from_bytes(data: bytes) -> str:
     """bytes ảnh -> data URI (dùng chung cho embed + rerank multimodal)."""
-    return f"data:{_image_mime(data)};base64,{base64.b64encode(data).decode('ascii')}"
+    return f"data:{image_mime(data)};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 class OpenAIEmbedder(BaseRemoteEmbedder):

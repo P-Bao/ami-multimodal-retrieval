@@ -5,23 +5,11 @@ from datetime import timedelta
 from bson import ObjectId
 
 from ami_rag.observability import PRESIGN_FAILURES_TOTAL
+from ami_rag.storage.assets import minio_http_client
 
 _OBJECTID_PREFIX_RE = re.compile(r"^([0-9a-f]{24})_")
 
 _MINIO_HTTP_TIMEOUT_SECONDS = 3
-_MINIO_POOL_MAXSIZE = 16
-
-
-def _minio_http_client():
-    import urllib3
-
-    return urllib3.PoolManager(
-        timeout=urllib3.Timeout(
-            connect=_MINIO_HTTP_TIMEOUT_SECONDS, read=_MINIO_HTTP_TIMEOUT_SECONDS
-        ),
-        retries=urllib3.Retry(total=1, backoff_factor=0),
-        maxsize=_MINIO_POOL_MAXSIZE,
-    )
 
 
 class DocResolver:
@@ -73,7 +61,7 @@ class DocResolver:
                 access_key=self._minio_access_key,
                 secret_key=self._minio_secret_key,
                 secure=self._minio_secure,
-                http_client=_minio_http_client(),
+                http_client=minio_http_client(read_timeout=_MINIO_HTTP_TIMEOUT_SECONDS),
             )
         return self._minio_client
 

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ami_rag.storage.assets import minio_http_client
 from ami_rag.textnorm import fold_text
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,6 @@ _IMAGE_EXTS = (
     ".avif",
 )
 
-_MINIO_POOL_MAXSIZE = 16
 
 _TRUSTED_NO_SSL_VERIFY_DOMAINS = (
     "ptit.edu.vn",
@@ -204,20 +204,14 @@ class CrawlImageWorker:
 
     def _get_client(self):
         if self._client is None:
-            import urllib3
             from minio import Minio
 
-            http_client = urllib3.PoolManager(
-                timeout=urllib3.Timeout(connect=3, read=60),
-                retries=urllib3.Retry(total=1, backoff_factor=0),
-                maxsize=_MINIO_POOL_MAXSIZE,
-            )
             self._client = Minio(
                 self._endpoint,
                 access_key=self._access_key,
                 secret_key=self._secret_key,
                 secure=self._secure,
-                http_client=http_client,
+                http_client=minio_http_client(),
             )
         return self._client
 

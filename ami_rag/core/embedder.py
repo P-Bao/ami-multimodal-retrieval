@@ -82,6 +82,17 @@ def clamp_embed_text(
     return text[:max_chars]
 
 
+def image_mime(data: bytes) -> str:
+    """Sniff mime ảnh từ magic bytes (png/webp/gif, còn lại -> jpeg)."""
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:3] == b"GIF":
+        return "image/gif"
+    return "image/jpeg"
+
+
 def embed_model_slug(model_name: str) -> str:
     """'Qwen/Qwen3-VL-Embedding-2B' -> 'qwen3-vl-embedding-2b'."""
     slug = model_name.rsplit("/", 1)[-1].strip().lower()

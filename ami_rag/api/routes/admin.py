@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ami_rag.api.routes.rag import get_asset_store, verify_api_key
 from ami_rag.queue.events import EVENT_UPDATED, RagEvent
 from ami_rag.settings import get_settings
+from ami_rag.textnorm import join_caption
 
 router = APIRouter(tags=["admin"], dependencies=[Depends(verify_api_key)])
 
@@ -84,12 +85,6 @@ async def reprocess_failed(
     return {"requeued": requeued}
 
 
-def _join_caption(value) -> str | None:
-    if isinstance(value, (list, tuple)):
-        value = " ".join(str(v) for v in value if v)
-    return value or None
-
-
 def build_content_blocks(content_list: list[dict], presign=lambda key: None) -> list[dict]:
     """Normalize a parsed content_list into API blocks (asset_url = presigned asset_key)."""
     blocks = []
@@ -98,10 +93,10 @@ def build_content_blocks(content_list: list[dict], presign=lambda key: None) -> 
         block = {"type": block_type, "page_idx": item.get("page_idx")}
         if block_type == "table":
             block["table_body"] = item.get("table_body")
-            block["caption"] = _join_caption(item.get("table_caption"))
+            block["caption"] = join_caption(item.get("table_caption")) or None
             block["asset_url"] = presign(item.get("asset_key"))
         elif block_type == "image":
-            block["caption"] = _join_caption(item.get("image_caption"))
+            block["caption"] = join_caption(item.get("image_caption")) or None
             block["asset_url"] = presign(item.get("asset_key"))
         elif block_type == "equation":
             block["latex"] = item.get("latex") or item.get("text")

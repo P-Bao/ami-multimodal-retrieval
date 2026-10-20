@@ -61,6 +61,7 @@ from ami_rag.storage.doc_status import (
     STAGE_PARSE,
     DocStatusStore,
 )
+from ami_rag.textnorm import join_caption as _join_caption
 from ami_rag.textnorm import with_title
 
 logger = logging.getLogger(__name__)
@@ -215,14 +216,6 @@ def _format_modal_chunk(type_: str, item: dict, description: str) -> str:
     if type_ == "video":
         return f"[Video Content]\n{description}"
     return f"[{_normalize_item_type(type_).title()}]\n{description}"
-
-
-def _join_caption(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(v) for v in value if v)
-    return str(value)
 
 
 # Chunk ngắn hơn ngưỡng này bị gộp vào chunk kề. Doc crawl viết mỗi trường một

@@ -1,6 +1,7 @@
 import base64
 from collections.abc import Callable
 
+from ami_rag.core.embedder import image_mime as _image_mime
 from ami_rag.settings import Settings, get_settings
 
 _pipeline_instance = None
@@ -29,16 +30,6 @@ def _build_llm_func(settings: Settings) -> Callable:
         return resp.choices[0].message.content
 
     return qwen_llm
-
-
-def _image_mime(data: bytes) -> str:
-    if data.startswith(b"\x89PNG"):
-        return "image/png"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    if data[:3] == b"GIF":
-        return "image/gif"
-    return "image/jpeg"
 
 
 def _openai_style_messages(

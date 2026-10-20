@@ -12,6 +12,18 @@ CONTENT_LIST_NAME = "content_list.json"
 _MINIO_POOL_MAXSIZE = 16
 
 
+def minio_http_client(*, read_timeout: int = 60):
+    """urllib3 PoolManager dùng chung cho mọi Minio client (maxsize=16 —
+    describe/rerank fetch nhiều ảnh song song, đừng hạ; connect 3s fail-fast)."""
+    import urllib3
+
+    return urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=3, read=read_timeout),
+        retries=urllib3.Retry(total=1, backoff_factor=0),
+        maxsize=_MINIO_POOL_MAXSIZE,
+    )
+
+
 class MinioAssetStore:
     """MinIO access for the RAG pipeline (single bucket, `ASSET_PREFIX/{doc_id}/...`).
 
@@ -47,20 +59,14 @@ class MinioAssetStore:
 
     def _get_client(self):
         if self._client is None:
-            import urllib3
             from minio import Minio
 
-            http_client = urllib3.PoolManager(
-                timeout=urllib3.Timeout(connect=3, read=60),
-                retries=urllib3.Retry(total=1, backoff_factor=0),
-                maxsize=_MINIO_POOL_MAXSIZE,
-            )
             self._client = Minio(
                 self._endpoint,
                 access_key=self._access_key,
                 secret_key=self._secret_key,
                 secure=self._secure,
-                http_client=http_client,
+                http_client=minio_http_client(),
             )
         return self._client
 
