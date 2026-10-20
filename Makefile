@@ -16,7 +16,7 @@ CLI_SERVICE ?= ami-rag-worker
 CLI_LOG_DIR ?= /app/output/cli
 NETWORK ?= ami-network
 
-.PHONY: help setup style lint test test-lib start_backend start_worker \
+.PHONY: help setup style lint test test-lib test-live start_backend start_worker \
 	network build start_docker restart down logs ps health cli cli-logs cli-ps cli-stop docker-clean \
 	dashboard-configmap dashboard-apply metrics-scrape-apply clean
 
@@ -27,6 +27,7 @@ help:
 	@echo "  make style            - Format + lint tu dong sua (ruff)"
 	@echo "  make lint             - Chi kiem tra lint (ruff)"
 	@echo "  make test             - Chay pytest"
+	@echo "  make test-live        - Chay test live retrieval (can stack + index)"
 	@echo "  make start_backend    - Chay API local (uvicorn --reload, port $(PORT))"
 	@echo "  make start_worker     - Chay ingest worker local"
 	@echo "  make network          - Tao docker network '$(NETWORK)' neu chua co"
@@ -67,7 +68,12 @@ test:
 	uv run pytest -v tests/ami_service/
 
 test-lib:
-	uv run pytest -q tests --ignore=tests/ami_service
+	uv run pytest -q tests --ignore=tests/ami_service -m "not live"
+
+# Test live: goi API that (RAG_BASE_URL, RAG_API_KEY, RAG_TIMEOUT); tu skip neu
+# /readyz khong tra 200. Index phai da reindex theo collection hien tai.
+test-live:
+	uv run pytest -q -m live tests/test_retrieval_recall_live.py
 
 # Chay API o che do reload cho dev local.
 start_backend:
