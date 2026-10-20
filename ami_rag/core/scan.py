@@ -9,12 +9,12 @@ cần chuyển; `ami-rag reindex` chọn cả pending + stale khi --scan.
 import logging
 
 from ami_rag.sources import source_hash
-from ami_rag.storage.doc_status import STATUS_INDEXED, effective_status
+from ami_rag.storage.doc_status import STATUS_FAILED, STATUS_INDEXED, effective_status
 
 logger = logging.getLogger(__name__)
 
 
-async def scan_pending(store, docs_repo, *, embed_model: str | None = None, chunker_version: str | None = None) -> dict:
+async def scan_pending(store, docs_repo) -> dict:
     """Scan backend docs -> ensure_pending cho docs thiếu registry row.
 
     Returns summary: {"total", "created", "existing", "reindexed_ok", "stale_kept"}.
@@ -47,5 +47,5 @@ def reindex_candidates(rows: list[dict], *, embed_model: str, chunker_version: s
         row
         for row in rows
         if effective_status(row, embed_model, chunker_version)
-        not in (STATUS_INDEXED, "failed")
+        not in (STATUS_INDEXED, STATUS_FAILED)
     ]

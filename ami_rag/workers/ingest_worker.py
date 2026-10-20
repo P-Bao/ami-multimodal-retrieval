@@ -134,11 +134,9 @@ class IngestWorker:
         INGEST_IN_FLIGHT.inc()
         started = time.perf_counter()
         source = "none"
-        ran = False
         try:
             try:
                 result = await self.handle_event(event)
-                ran = True
             except Exception as exc:
                 self.log.error(
                     "failed to process event %s for document %s: %s",
@@ -146,19 +144,18 @@ class IngestWorker:
                     event.document_id,
                     exc,
                 )
-                if not ran:
-                    # begin_attempt đã +1 attempts ở đầu delivery; mark_failed
-                    # chỉ ghi trạng thái (tăng nữa là đếm đôi, cắt ngắn budget
-                    # WORKER_MAX_DELIVERY / --max-attempts của CLI retry).
-                    await asyncio.to_thread(
-                        partial(
-                            self.state_repo.mark_failed,
-                            event.document_id,
-                            str(exc),
-                            "ingest",
-                            increment_attempt=False,
-                        )
+                # begin_attempt đã +1 attempts ở đầu delivery; mark_failed
+                # chỉ ghi trạng thái (tăng nữa là đếm đôi, cắt ngắn budget
+                # WORKER_MAX_DELIVERY / --max-attempts của CLI retry).
+                await asyncio.to_thread(
+                    partial(
+                        self.state_repo.mark_failed,
+                        event.document_id,
+                        str(exc),
+                        "ingest",
+                        increment_attempt=False,
                     )
+                )
                 if attempts >= self.settings.WORKER_MAX_DELIVERY:
                     INGEST_EVENTS_TOTAL.labels(event=event.event, result="failed").inc()
                     await self.queue.ack(message_id)
