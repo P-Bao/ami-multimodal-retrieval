@@ -223,8 +223,7 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | | `RERANK_VISUAL_WEIGHT` | `0.8` | weight nhóm image trong RRF (nhóm còn lại = 1.0, mã hoá prior text) |
 | | `RERANK_VISUAL_FLOOR` | `0.01` | raw score dưới floor nhóm image bị chặn không được promote (xếp cuối theo raw) |
 | | `RERANK_TEXT_FLOOR` | `0.05` | như trên cho nhóm không-image (text/table/equation) |
-| Retrieval | `RETRIEVAL_CHUNK_TOP_K` | `40` | số chunk tối thiểu lấy từ Qdrant trước khi rerank |
-| | `RETRIEVAL_OVERFETCH` | `4` | hệ số nhân lấy ứng viên: `max(RETRIEVAL_CHUNK_TOP_K, top_k * RETRIEVAL_OVERFETCH)` để sau khi rerank vẫn đủ `top_k` kết quả |
+| Retrieval | `RETRIEVAL_CHUNK_TOP_K` | `40` | số chunk tối thiểu lấy từ Qdrant trước khi rerank; tổng ứng viên = `max(RETRIEVAL_CHUNK_TOP_K, top_k * 2)` |
 | Pipeline/CLI | `CHUNKER_VERSION` | `v1` | một phần tên collection Qdrant + kiểm tra tương thích lúc reindex; đổi giá trị ⇒ collection mới + reindex (mục 5.5). `settings.py` mặc định `v1` và `.env.ami.example` cũng để `v1` |
 | | `CLI_STUCK_PROCESSING_MINUTES` | `60` | doc `processing` quá lâu bị `status` báo là treo |
 | MinIO | `MINIO_ENDPOINT` | `localhost:9000` | |
@@ -455,7 +454,7 @@ Field của mỗi document (`RetrievedDocV2`):
 
 `references`: danh sách `doc` dedup theo `document_id`, chỉ có khi `include_references: true`. `meta`: `latency_ms`, `requested_top_k`, `returned`, `candidates` (số ứng viên tầng vector), `fusion` = `raw` | `rrf` | `empty` (cấu hình rerank fusion đã áp dụng).
 
-Luồng: embed query dense+sparse (máy B; embedder legacy thì dense-only, mục 5.6) → hybrid search Qdrant, 2 prefetch fuse RRF ngay tại Qdrant, lấy `max(RETRIEVAL_CHUNK_TOP_K, top_k * RETRIEVAL_OVERFETCH)` ứng viên → rerank service (`RERANK_FUSION=rrf` thì xin full scores + fuse 2 nhóm modality, mục 5.2) → trả `top_k` document đầu. Lỗi rerank → trả chunk không điểm (fallback, đo `rerank_fallback_total`).
+Luồng: embed query dense+sparse (máy B; embedder legacy thì dense-only, mục 5.6) → hybrid search Qdrant, 2 prefetch fuse RRF ngay tại Qdrant, lấy `max(RETRIEVAL_CHUNK_TOP_K, top_k * 2)` ứng viên → rerank service (`RERANK_FUSION=rrf` thì xin full scores + fuse 2 nhóm modality, mục 5.2) → trả `top_k` document đầu. Lỗi rerank → trả chunk không điểm (fallback, đo `rerank_fallback_total`).
 
 **Chẩn đoán 1 query** khi kết quả không như mong đợi (ảnh không lên top-k, chunk trả về vô nghĩa…): `scripts/diagnose_query.py` in ra hạng + điểm vector của từng ứng viên, điểm rerank raw, và kết luận rõ ảnh rơi ở tầng nào.
 

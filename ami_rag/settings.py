@@ -173,9 +173,7 @@ class Settings(BaseSettings):
     RERANK_VISUAL_FLOOR: float = 0.01
     RERANK_TEXT_FLOOR: float = 0.05
 
-    # candidates fetched = final top_k * RETRIEVAL_OVERFETCH, so rerank always yields top_k docs
     RETRIEVAL_CHUNK_TOP_K: int = 40
-    RETRIEVAL_OVERFETCH: int = 4
     # docs repaired in parallel by `reindex --repair` (low: avoids provider 429)
 
     MINIO_ENDPOINT: str = "localhost:9000"

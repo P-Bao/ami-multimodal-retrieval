@@ -154,6 +154,7 @@ class FakeVectorStore:
         self.points: dict[str, dict] = {}
         self.collections: dict[str, int] = {}
         self.sparse_collections: set[str] = set()
+        self.search_limits: list[int] = []
 
     async def ensure_collection(self, name: str, dim: int, *, sparse: bool = True) -> None:
         self.collections[name] = dim
@@ -168,6 +169,7 @@ class FakeVectorStore:
     async def search(self, collection, vector, top_k, *, sparse=None):
         from ami_rag.core.vector_store import SearchHit
 
+        self.search_limits.append(top_k)
         return [
             SearchHit(id=k, score=0.9, payload=dict(p))
             for k, p in list(self.points.items())[:top_k]

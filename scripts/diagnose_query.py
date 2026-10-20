@@ -237,14 +237,14 @@ def main() -> None:
     parser.add_argument("--query", required=True, help="câu hỏi cần chẩn đoán")
     parser.add_argument("--top-k", type=int, default=5, help="số doc cuối cùng (giống RAG request)")
     parser.add_argument("--candidates", type=int, default=0,
-                        help="số ứng viên lấy từ Qdrant (0 = max(RETRIEVAL_CHUNK_TOP_K, top_k*OVERFETCH))")
+                        help="số ứng viên lấy từ Qdrant (0 = max(RETRIEVAL_CHUNK_TOP_K, top_k*2))")
     parser.add_argument("--output", help="ghi kết quả JSON ra file")
     args = parser.parse_args()
     settings = get_settings()
     if not args.candidates:
         args.candidates = max(
             settings.RETRIEVAL_CHUNK_TOP_K,
-            args.top_k * max(1, settings.RETRIEVAL_OVERFETCH),
+            args.top_k * 2,
         )
     result = asyncio.run(run_diagnose(args))
     if args.output:

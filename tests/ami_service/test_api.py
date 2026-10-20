@@ -629,6 +629,14 @@ async def test_top_k_defaults_to_rerank_top_k(client, fake_vector_store, monkeyp
     assert len(resp.json()["documents"]) == 5
 
 
+async def test_large_top_k_caps_rerank_candidates(client, fake_vector_store):
+    """top_k lớn -> số ứng viên cho rerank bị cap 2× (không 4×, không 800)."""
+    _seed_chunks(fake_vector_store, 10)
+    resp = await client.post("/v2/rag/", json={**BODY, "top_k": 50})
+    assert resp.status_code == 200
+    assert fake_vector_store.search_limits[-1] == 100
+
+
 async def test_fewer_candidates_than_top_k_reported_in_meta(client, fake_vector_store):
     fake_vector_store.points.clear()
     _seed_chunks(fake_vector_store, 1)

@@ -125,11 +125,10 @@ async def retrieve(pipeline, rerank_func, query: str, top_k: int) -> list[dict]:
     """
     settings = get_settings()
     vector = await pipeline.embedder.embed_query(query)
-    candidates_wanted = top_k * max(1, settings.RETRIEVAL_OVERFETCH)
     hits = await pipeline.vector_store.search(
         pipeline.collection,
         vector,
-        max(settings.RETRIEVAL_CHUNK_TOP_K, candidates_wanted),
+        max(settings.RETRIEVAL_CHUNK_TOP_K, top_k * 2),
     )
     chunks = [hit.payload for hit in hits]
     if not chunks:

@@ -250,11 +250,11 @@ async def _run_search(
     query: str,
     top_k: int,
 ) -> dict:
-    """embed (máy B) -> vector search -> rerank. `top_k * RETRIEVAL_OVERFETCH`
-    candidates để rerank luôn đủ `top_k` kết quả khi có."""
+    """embed (máy B) -> vector search -> rerank. Số ứng viên
+    ``max(RETRIEVAL_CHUNK_TOP_K, top_k * 2)``: đủ dư cho rerank lọc mà không
+    dội quá nhiều POST lên rerank server khi top_k lớn (schema cho tới 200)."""
     settings = get_settings()
     started = time.perf_counter()
-    candidates_wanted = top_k * max(1, settings.RETRIEVAL_OVERFETCH)
     with observe_stage("embed_query"):
         # Hybrid: embedder có embed_query_sparse -> lấy dense + sparse của query;
         # embedder legacy (chỉ embed_query) -> dense-only (sparse=None).
@@ -277,7 +277,7 @@ async def _run_search(
         hits = await pipeline.vector_store.search(
             pipeline.collection,
             vector,
-            max(settings.RETRIEVAL_CHUNK_TOP_K, candidates_wanted),
+            max(settings.RETRIEVAL_CHUNK_TOP_K, top_k * 2),
             sparse=sparse,
         )
     chunks = [hit.payload for hit in hits]

@@ -110,7 +110,7 @@ Response: `query`, `documents` (danh sách `RetrievedDocV2`), `references`, `met
 
 Auth: `Authorization: Bearer $RAG_API_KEY` — để `RAG_API_KEY` trống trong `.env` = không auth. `/metrics` không cần key.
 
-Luồng truy xuất: embed query (dense + sparse) → hybrid search trong Qdrant (fuse RRF của dense và sparse) → rerank BGE text-only trên caption → trả `top_k` document. `top_k` của request là số doc trả về cuối cùng; vector search lấy dư ứng viên (`top_k * RETRIEVAL_OVERFETCH`) để rerank.
+Luồng truy xuất: embed query (dense + sparse) → hybrid search trong Qdrant (fuse RRF của dense và sparse) → rerank BGE text-only trên caption → trả `top_k` document. `top_k` của request là số doc trả về cuối cùng; vector search lấy dư ứng viên (`max(RETRIEVAL_CHUNK_TOP_K, top_k*2)` — cap 2× để không dội quá nhiều POST lên rerank khi `top_k` lớn).
 
 Ngoài ra còn có `/admin/*` — xem [docs/ami_service.md](docs/ami_service.md) §6.
 
