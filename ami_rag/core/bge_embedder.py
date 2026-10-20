@@ -11,44 +11,38 @@ Text-only (dense 1024 + sparse lexical weights). Contract server:
   500/503/504 transient (retry).
 - Item ``image_b64`` BỎ (BGE-M3 text-only): chỉ lấy text, log warning, không raise.
 - Cache embedding (tuỳ chọn) chỉ dense - sparse tính lại mỗi lần gọi server.
-- Circuit breaker: N lần liên tiếp không với tới server -> dừng cả lô sớm.
+- Retry/backoff, circuit breaker, chia nhóm batch: dùng chung ``BaseRemoteEmbedder``.
 """
 
 import asyncio
 import hashlib
 import logging
-import random
-from itertools import islice
-from typing import Protocol
 
 import httpx
 
+from ami_rag.core.base_embedder import CIRCUIT_THRESHOLD, BaseRemoteEmbedder
 from ami_rag.core.embedder import (
     EmbedAuthError,
     EmbedCircuitOpen,
     EmbedderError,
-    EmbedInputTooLong,
     EmbedModelMismatch,
-    EmbedServerOOM,
     EmbedServerUnreachable,
     clamp_embed_text,
 )
 
 logger = logging.getLogger(__name__)
 
-# N lần liên tiếp không với tới server -> dừng cả lô sớm (thay vì đánh failed hàng loạt)
-CIRCUIT_THRESHOLD = 5
 # Serve tối đa 64 text/request (server đơn giản từ chối 400 theo số text)
 MAX_TEXTS_PER_REQUEST = 64
 
-
-class _Cache(Protocol):
-    def get_many(self, keys: list[str]) -> dict[str, list[float]]: ...
-    def put_many(self, mapping: dict[str, list[float]]) -> None: ...
+__all__ = ["BGEM3Embedder", "build_bge_embedder"]
 
 
-class BGEM3Embedder:
+class BGEM3Embedder(BaseRemoteEmbedder):
     """Client embedding server machine B (BAAI/bge-m3, dense + sparse)."""
+
+    # Server trả cả 413 lẫn 422 cho payload/text quá dài
+    too_long_statuses = (413, 422)
 
     def __init__(
         self,
@@ -64,32 +58,26 @@ class BGEM3Embedder:
         image_token_reserve: int = 0,
         retries: int = 3,
         backoff_base: float = 0.5,
-        cache: _Cache | None = None,
+        cache=None,
         return_sparse: bool = True,
         http_client: httpx.AsyncClient | None = None,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.model_name = model
-        self.expected_dim = expected_dim
-        self.dim = expected_dim if expected_dim is not None else 0
-        self.timeout = timeout
-        self.batch_size = max(1, min(batch_size, MAX_TEXTS_PER_REQUEST))
-        self.max_concurrency = max_concurrency
+        super().__init__(
+            base_url,
+            model=model,
+            expected_dim=expected_dim,
+            token=token,
+            timeout=timeout,
+            batch_size=max(1, min(batch_size, MAX_TEXTS_PER_REQUEST)),
+            max_concurrency=max_concurrency,
+            retries=retries,
+            backoff_base=backoff_base,
+            cache=cache,
+            http_client=http_client,
+        )
         self.max_input_tokens = max_input_tokens
         self.image_token_reserve = image_token_reserve
-        self.retries = retries
-        self.backoff_base = backoff_base
-        self.cache = cache
         self.return_sparse = return_sparse
-        self._client = http_client or httpx.AsyncClient(
-            timeout=timeout,
-            headers={"Authorization": f"Bearer {token}"} if token else {},
-        )
-        self._semaphore: asyncio.Semaphore | None = None
-        self._verified = False
-        self._instruction_ns = ""
-        self._consecutive_unreachable = 0
 
     # ------------------------------------------------------------------
     # Handshake
@@ -136,10 +124,6 @@ class BGEM3Embedder:
         )
         return info
 
-    async def _ensure_verified(self) -> None:
-        if not self._verified:
-            await self.verify()
-
     # ------------------------------------------------------------------
     # Embed
     # ------------------------------------------------------------------
@@ -169,20 +153,6 @@ class BGEM3Embedder:
             [text], use_cache=False, want_sparse=self.return_sparse
         )
         return dense[0], sparse[0]
-
-    # ------------------------------------------------------------------
-    # Cache (không HTTP)
-    # ------------------------------------------------------------------
-    def count_cache_hits(self, items: list[str | dict]) -> int:
-        """Đếm số item đã có trong cache (lookup SQLite, KHÔNG gọi HTTP).
-
-        Yêu cầu đã verify (dim + instruction_ns từ handshake); cache tắt -> 0.
-        """
-        if not items or self.cache is None or not self._verified:
-            return 0
-        keys = [self._cache_key(it) for it in items]
-        cached = self.cache.get_many(keys)
-        return sum(1 for k in keys if k in cached)
 
     # ------------------------------------------------------------------
     # Luồng chính (dùng chung cho dense / sparse / query / documents)
@@ -292,67 +262,13 @@ class BGEM3Embedder:
     async def _post_embed(
         self, texts: list[str], *, return_sparse: bool
     ) -> dict:
-        """Một POST /embed với retry cho lỗi tạm thời; 4xx raise ngay."""
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self.max_concurrency)
-        attempt = 0
-        while True:
-            try:
-                async with self._semaphore:
-                    resp = await self._client.post(
-                        f"{self.base_url}/embed",
-                        json={
-                            "texts": texts,
-                            "return_dense": True,
-                            "return_sparse": return_sparse,
-                        },
-                    )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                if attempt >= self.retries:
-                    # Hết retry: đếm lô này là 1 lần unreachable liên tiếp
-                    # (circuit breaker ở _flow quyết định dừng lô)
-                    self._consecutive_unreachable += 1
-                    raise EmbedServerUnreachable(
-                        f"embed server không với tới được sau {attempt + 1} lần thử: {exc}"
-                    ) from exc
-                attempt += 1
-                await asyncio.sleep(self._backoff(attempt))
-                continue
-
-            self._consecutive_unreachable = 0
-
-            if resp.status_code == 200:
-                return resp.json()
-
-            detail = self._detail(resp)
-            if resp.status_code in (401, 403):
-                raise EmbedAuthError(f"embed server từ chối token: {detail}")
-            if resp.status_code in (413, 422):
-                raise EmbedInputTooLong(
-                    f"input quá dài / payload vượt giới hạn: {detail}"
-                )
-            if resp.status_code == 507:
-                raise EmbedServerOOM(f"embed server hết GPU memory: {detail}")
-            if resp.status_code == 429 or resp.status_code >= 500:
-                if attempt >= self.retries:
-                    raise EmbedServerUnreachable(
-                        f"embed server lỗi tạm thời {resp.status_code} sau "
-                        f"{attempt + 1} lần thử: {detail}"
-                    )
-                attempt += 1
-                await asyncio.sleep(self._backoff(attempt))
-                continue
-            raise EmbedderError(f"embed server trả {resp.status_code}: {detail}")
-
-    @staticmethod
-    def _detail(resp: httpx.Response) -> str:
-        try:
-            return str(resp.json().get("detail", resp.text))[:300]
-        except ValueError:
-            return resp.text[:300]
+        return await self._post(
+            f"{self.base_url}/embed",
+            {"texts": texts, "return_dense": True, "return_sparse": return_sparse},
+        )
 
     # ------------------------------------------------------------------
-    # Prepare texts / batching / cache key
+    # Prepare texts / sparse decode
     # ------------------------------------------------------------------
     def _normalize_items(self, items: list[str | dict]) -> list[str]:
         """Item -> text gửi server: bỏ image_b64 (caption-only), head-truncate
@@ -402,24 +318,6 @@ class BGEM3Embedder:
             "indices": [i for i, _ in pairs],
             "values": [v for _, v in pairs],
         }
-
-    @staticmethod
-    def _groups(batches: list[list[int]], size: int):
-        iterator = iter(batches)
-        while group := list(islice(iterator, size)):
-            yield group
-
-    def _cache_key(self, item: str) -> str:
-        content_hash = hashlib.sha256(str(item).encode("utf-8")).hexdigest()
-        return f"{self.model}|{self.dim}|{self._instruction_ns}|{content_hash}"
-
-    def _backoff(self, attempt: int) -> float:
-        return self.backoff_base * (2 ** (attempt - 1)) + random.uniform(0, 0.1)
-
-    async def close(self) -> None:
-        if self.cache is not None:
-            await asyncio.to_thread(self.cache.close)
-        await self._client.aclose()
 
 
 def build_bge_embedder(settings) -> BGEM3Embedder:
