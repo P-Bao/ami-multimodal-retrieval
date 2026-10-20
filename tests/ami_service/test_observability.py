@@ -307,6 +307,29 @@ def test_truncate_documents_json_keeps_valid_json():
     )
 
 
+def test_set_documents_env_toggle(monkeypatch, caplog):
+    """TRACE_OUTPUT_DOCUMENTS=0 bỏ payload (span event + log), giữ num_docs/trace_id."""
+    import logging
+    import time
+
+    from opentelemetry import trace as otel_trace
+
+    span = otel_trace.get_tracer("test").start_span("t")
+    doc = {"text": "nội dung tài liệu", "score": 0.5, "metadata": {}}
+    with caplog.at_level(logging.INFO, logger="ami_rag.observability"):
+        obs.RetrievalTracker(span, time.perf_counter()).set_documents([doc])
+        on = caplog.records[-1]
+        assert on.documents == [{"text": "nội dung tài liệu", "score": 0.5, "metadata": {}}]
+        assert on.trace_id
+
+        monkeypatch.setenv("TRACE_OUTPUT_DOCUMENTS", "0")
+        obs.RetrievalTracker(span, time.perf_counter()).set_documents([doc])
+        off = caplog.records[-1]
+        assert "documents" not in off.__dict__
+        assert off.trace_id
+        assert off.getMessage().startswith("rag_retrieval_output num_docs=1")
+
+
 def test_normalize_otlp_traces_url():
     for raw in ("http://tempo:4318", "http://tempo:4318/", "http://tempo:4318/v1/traces"):
         assert obs.normalize_otlp_traces_url(raw) == "http://tempo:4318/v1/traces"

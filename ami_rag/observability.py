@@ -274,6 +274,14 @@ def _parse_max_event_attr_chars() -> int:
         return _DEFAULT_MAX_EVENT_ATTR_CHARS
 
 
+def _log_documents_enabled() -> bool:
+    """``TRACE_OUTPUT_DOCUMENTS=0`` tắt payload document trong span event + log
+    (còn num_docs/duration/trace_id để join Tempo) - cắt volume log/trace khi
+    dashboard không cần xem nội dung document."""
+    raw = os.environ.get("TRACE_OUTPUT_DOCUMENTS", "").strip().lower()
+    return raw not in ("0", "false", "no")
+
+
 _MAX_EVENT_ATTR_CHARS = _parse_max_event_attr_chars()
 
 
@@ -335,21 +343,23 @@ class RetrievalTracker:
     def set_documents(self, documents: list[Any]) -> None:
         DOCS_RETURNED.observe(len(documents))
         self.span.set_attribute("output.num_docs", len(documents))
-        payload = _docs_payload(documents)
-        self.span.add_event(
-            "retrieval.output",
-            attributes={"documents_json": _truncate_documents_json(payload)},
-        )
         ctx = self.span.get_span_context()
+        extra: dict[str, Any] = {
+            "trace_id": format(ctx.trace_id, "032x"),
+            "span_id": format(ctx.span_id, "016x"),
+        }
+        if _log_documents_enabled():
+            payload = _docs_payload(documents)
+            self.span.add_event(
+                "retrieval.output",
+                attributes={"documents_json": _truncate_documents_json(payload)},
+            )
+            extra["documents"] = payload
         logger.info(
             "rag_retrieval_output num_docs=%d duration=%.4fs",
             len(documents),
             time.perf_counter() - self._started,
-            extra={
-                "trace_id": format(ctx.trace_id, "032x"),
-                "span_id": format(ctx.span_id, "016x"),
-                "documents": payload,
-            },
+            extra=extra,
         )
 
 

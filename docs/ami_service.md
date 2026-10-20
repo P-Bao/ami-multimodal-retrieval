@@ -238,6 +238,7 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | Tracing | `OTEL_EXPORTER_OTLP_ENDPOINT` | rỗng | rỗng = tracing tắt; đọc từ `os.environ`. Chỉ API dùng; compose để trống cho worker. Trỏ tới OTLP/HTTP của Tempo riêng `tempo-multimodal-rag` (xem 9) |
 | | `OTEL_SERVICE_NAME` | `multimodal-rag-retrieval` | |
 | | `TRACE_OUTPUT_MAX_LEN` | `2000000` | giới hạn ký tự event `documents_json`; `0` = không cắt |
+| | `TRACE_OUTPUT_DOCUMENTS` | bật | `0` = bỏ payload document trong span event + log (còn `num_docs`/`duration`/`trace_id`); dashboard panel "Output" đọc `event.documents_json` nên chỉ tắt khi không cần xem nội dung |
 
 Lưu ý: `OTEL_*` và `TRACE_OUTPUT_MAX_LEN` do `observability.py` đọc trực tiếp từ `os.environ` (không qua `Settings`). Docker Compose nạp `.env` vào môi trường container nên hoạt động; khi chạy local bằng `make start_backend`, cần `export` các biến này trong shell.
 
