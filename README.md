@@ -105,7 +105,7 @@ Body:
 }
 ```
 
-Response: `query`, `documents` (danh sách `RetrievedDocV2`), `references`, `meta` (latency_ms, requested_top_k, returned, candidates, fusion). Mỗi document gồm `text`, `score`, `metadata`, `modality`, `artifact_url` (1 ảnh của chunk) và `artifact_urls` (danh sách presigned mọi ảnh của doc: ảnh crawl + ảnh PDF).
+Response: `query`, `documents` (danh sách `RetrievedDocV2`), `references`, `meta` (latency_ms, requested_top_k, returned, candidates, fusion). Mỗi document gồm `text`, `score`, `metadata`, `modality`, `artifact_url` (1 ảnh của chunk) và `artifact_urls` (presigned mọi ảnh của doc — chỉ doc crawl; doc PDF/upload trả `[]`).
 
 Auth: `Authorization: Bearer $RAG_API_KEY` — để `RAG_API_KEY` trống trong `.env` = không auth. `/metrics` không cần key.
 

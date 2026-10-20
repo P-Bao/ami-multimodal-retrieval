@@ -350,6 +350,17 @@ def fake_docs_repo():
                 "organization_unit_id": "64b000000000000000000002",
                 "metadata": {},
             },
+            "64b000000000000000000007": {
+                "_id": "64b000000000000000000007",
+                "title": "Crawl G",
+                "content": "nội dung bài crawl G",
+                "content_hash": "hash-g",
+                "document_type": "news",
+                "original_file_name": None,
+                "file_path": None,
+                "organization_unit_id": "64b000000000000000000002",
+                "metadata": {"source_url": "https://ptit.edu.vn/tin/crawl-g"},
+            },
         }
     )
 

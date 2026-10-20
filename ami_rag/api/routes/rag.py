@@ -176,8 +176,9 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
     """Build v2 documents: resolve mỗi chunk qua doc_id (payload mang doc_id trực tiếp).
 
     `artifact_urls`: chunk payload có sẵn URL gốc (doc crawl — artifact_urls
-    từ parse stage) thì trả thẳng; ngược lại presign MinIO cho doc đã resolve
-    (cache per request: 1 lần list MinIO per doc_id, URL luôn mới).
+    từ parse stage) thì trả thẳng; ngược lại chỉ doc crawl index trước đây
+    mới presign MinIO (cache per request: 1 lần list MinIO per doc_id, URL
+    luôn mới). Doc khác → `[]`.
     """
     documents = []
     resolved_cache: dict[str, dict | None] = {}
@@ -193,9 +194,15 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
         modality = chunk.get("modality") or "text"
         page = chunk.get("page")
         artifact_urls = list(chunk.get("artifact_urls") or [])
-        if not artifact_urls and resolved is not None and asset_store is not None:
-            # 1 lần list MinIO per doc_id mỗi request (trước đây N chunk cùng
-            # doc list N lần); cache per-request nên URL luôn mới.
+        if (
+            not artifact_urls
+            and resolved is not None
+            and asset_store is not None
+            and await resolver.is_crawl_doc_id(doc_id)
+        ):
+            # Fallback presign chỉ cho doc crawl index trước đây chưa có
+            # artifact_urls trong payload. 1 lần list MinIO per doc_id mỗi
+            # request; cache per-request nên URL luôn mới.
             if doc_id not in urls_cache:
                 try:
                     urls_cache[doc_id] = await asyncio.to_thread(
