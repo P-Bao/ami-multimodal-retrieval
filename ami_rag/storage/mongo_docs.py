@@ -23,9 +23,6 @@ class MongoDocumentRepo:
     def find_by_file_path(self, file_path: str) -> dict | None:
         return self._col.find_one({"file_path": file_path})
 
-    def find_by_source_url(self, source_url: str) -> dict | None:
-        return self._col.find_one({"metadata.source_url": source_url})
-
     def iter_all(
         self, batch_size: int = 100, document_types: list[str] | None = None
     ) -> Iterator[dict]:

@@ -33,12 +33,6 @@ class FakeDocsRepo:
                 return doc
         return None
 
-    def find_by_source_url(self, source_url):
-        for doc in self.docs.values():
-            if (doc.get("metadata") or {}).get("source_url") == source_url:
-                return doc
-        return None
-
     def count(self):
         return len(self.docs)
 

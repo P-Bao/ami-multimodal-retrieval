@@ -1,24 +1,18 @@
 import asyncio
-import re
 from datetime import timedelta
-
-from bson import ObjectId
 
 from ami_rag.observability import PRESIGN_FAILURES_TOTAL
 from ami_rag.storage.assets import minio_http_client
-
-_OBJECTID_PREFIX_RE = re.compile(r"^([0-9a-f]{24})_")
 
 _MINIO_HTTP_TIMEOUT_SECONDS = 3
 
 
 class DocResolver:
-    """Resolve LightRAG file_paths back to Mongo documents.
+    """Resolve doc_id (vector chunks carry doc_id) về Mongo document.
 
-    LightRAG reference lists carry `file_path`, which the ingest worker set to
-    the MinIO object key (uploads) or metadata.source_url (crawl). Resolution
-    results (title, document_type, org, presigned MinIO URL, source URL) are
-    cached per file_path for the process lifetime.
+    Payload trả về (title, document_type, org, presigned MinIO URL, source URL);
+    field Mongo được cache theo doc_id trong vòng đời process, còn file_url
+    presign lại mỗi call (URL chỉ sống ``presign_expires`` giây).
     """
 
     def __init__(
@@ -40,17 +34,6 @@ class DocResolver:
         self._presign_expires = presign_expires
         self._cache: dict[str, dict | None] = {}
         self._minio_client = None
-
-    def _find_doc(self, file_path: str) -> dict | None:
-        match = _OBJECTID_PREFIX_RE.match(file_path)
-        if match and ObjectId.is_valid(match.group(1)):
-            doc = self.docs_repo.find_by_id(match.group(1))
-            if doc:
-                return doc
-        doc = self.docs_repo.find_by_file_path(file_path)
-        if doc:
-            return doc
-        return self.docs_repo.find_by_source_url(file_path)
 
     def _get_minio_client(self):
         if self._minio_client is None:
@@ -97,25 +80,6 @@ class DocResolver:
             PRESIGN_FAILURES_TOTAL.inc()
             return None
 
-    async def resolve(self, file_path: str) -> dict | None:
-        if not file_path:
-            return None
-        if file_path in self._cache:
-            return self._cache[file_path]
-        try:
-            doc = await asyncio.to_thread(self._find_doc, file_path)
-        except Exception:
-            doc = None
-        if doc is None:
-            self._cache[file_path] = None
-            return None
-        file_url = None
-        if doc.get("file_path"):
-            file_url = await self._presign_async(doc["file_path"])
-        payload = self._build_payload(doc, file_url)
-        self._cache[file_path] = payload
-        return payload
-
     async def resolve_doc_id(self, doc_id: str) -> dict | None:
         """Resolve a Mongo document id directly (vector chunks carry doc_id).
 
@@ -138,6 +102,3 @@ class DocResolver:
         if doc.get("file_path"):
             file_url = await self._presign_async(doc["file_path"])
         return self._build_payload(doc, file_url)
-
-    def invalidate(self, file_path: str) -> None:
-        self._cache.pop(file_path, None)

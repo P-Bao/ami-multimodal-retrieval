@@ -319,6 +319,3 @@ class QdrantVectorStore:
             self._client.count, collection_name=collection, count_filter=count_filter, exact=True
         )
         return int(result.count)
-
-
-QdrantVectorStoreClient = QdrantVectorStore  # alias cho test/typing mới

@@ -319,8 +319,3 @@ async def close_pipeline() -> None:
     if _remote_embedder_instance is not None:
         await _remote_embedder_instance.close()
         _remote_embedder_instance = None
-
-
-async def close_rag() -> None:
-    """Alias backward-compatible của close_pipeline."""
-    await close_pipeline()
