@@ -1,6 +1,7 @@
 from ami_rag.sources import (
     SOURCE_MINIO_PARSE,
     SOURCE_MONGO_TEXT,
+    is_crawl_doc,
     resolve_file_path,
     select_source,
     source_hash,
@@ -19,6 +20,31 @@ def test_select_source_empty_or_txt_uses_mongo_text():
 def test_select_source_office_and_pdf_use_minio_parse():
     for name in ("a.pdf", "b.docx", "c.DOC", "so tay.PDF"):
         assert select_source({"original_file_name": name}) == SOURCE_MINIO_PARSE
+
+
+def test_is_crawl_doc_requires_mongo_text_and_source_url():
+    assert is_crawl_doc(
+        {
+            "original_file_name": None,
+            "metadata": {"source_url": "https://ptit.edu.vn/tin/a"},
+        }
+    )
+    assert not is_crawl_doc({"original_file_name": None, "metadata": {}})
+    assert not is_crawl_doc(
+        {
+            "original_file_name": "a.pdf",
+            "metadata": {"source_url": "https://ptit.edu.vn/tin/a"},
+        }
+    )
+    # original_file_name thiếu nhưng có file gốc -> vẫn là PDF/upload, không phải crawl.
+    assert not is_crawl_doc(
+        {
+            "original_file_name": None,
+            "file_path": "documents/VAN_PHONG/a.pdf",
+            "metadata": {"source_url": "https://ptit.edu.vn/tin/a"},
+        }
+    )
+    assert not is_crawl_doc(None)
 
 
 def test_source_hash_mongo_text_ignores_whitespace_padding():

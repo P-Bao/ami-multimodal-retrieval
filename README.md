@@ -106,7 +106,7 @@ Body:
 }
 ```
 
-Response: `query`, `documents` (danh sách `RetrievedDocV2`), `references`, `meta` (latency_ms, requested_top_k, returned, candidates, fusion). Mỗi document gồm `text`, `score`, `metadata`, `modality`, `artifact_url` (1 ảnh của chunk) và `artifact_urls` (danh sách presigned mọi ảnh của doc: ảnh crawl + ảnh PDF).
+Response: `query`, `documents` (danh sách `RetrievedDocV2`), `references`, `meta` (latency_ms, requested_top_k, returned, candidates, fusion). Mỗi document gồm `text`, `score`, `metadata`, `modality`, `artifact_url` (1 ảnh của chunk) và `artifact_urls` (presigned mọi ảnh của doc — chỉ doc crawl; doc PDF/upload trả `[]`).
 
 Auth: `Authorization: Bearer $RAG_API_KEY` — để `RAG_API_KEY` trống trong `.env` = không auth. `/metrics` không cần key.
 
@@ -156,9 +156,12 @@ Makefile
 
 ```bash
 uv run pytest -q tests/ami_service/                  # test service (không cần dịch vụ ngoài, dùng fake)
-uv run pytest -q tests --ignore=tests/ami_service    # test thư viện RAG-Anything
+uv run pytest -q tests --ignore=tests/ami_service -m "not live"  # test thư viện RAG-Anything
+make test-live                                       # test live (cần stack + index; tự skip nếu /readyz != 200)
 uv run ruff check ami_rag tests/ami_service          # lint (tương đương `make lint`)
 ```
+
+Test live đọc `RAG_BASE_URL` / `RAG_API_KEY` / `RAG_TIMEOUT` trực tiếp từ `os.environ` (pytest không tự nạp `.env`). Chi tiết: `docs/ami_service.md` §10.1.
 
 ## Monitoring
 

@@ -68,6 +68,13 @@ def app(
                 "page": 5,
                 "caption": "Học phí",
             },
+            "chunk-5": {
+                "doc_id": "64b000000000000000000007",
+                "content": "Bài crawl G có ảnh.",
+                "modality": "text",
+                "source_path": "64b000000000000000000007_crawl-g",
+                "chunk_id": "chunk-5",
+            },
         }
     )
 
@@ -137,6 +144,7 @@ async def test_document_id_resolved_from_chunk_payload(client):
         "64b000000000000000000001",
         "64b000000000000000000005",
         "64b000000000000000000006",
+        "64b000000000000000000007",
     )
 
 
@@ -359,19 +367,31 @@ class _EmptySparseEmbedder(_LegacyEmbedder):
         return ([0.2] * self.dim, {"indices": [], "values": []})
 
 
-async def test_artifact_urls_presigned_doc_images(client, app):
-    app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
+async def test_artifact_urls_only_for_crawl_doc(client, app):
+    store = _ImageAssetStore()
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: store
     docs = (await client.post("/v2/rag/", json=BODY)).json()["documents"]
     assert docs
-    for d in docs:
-        # doc đã resolve + payload không có artifact_urls (chunk pdf/text seed):
-        # presign_doc_images chạy như cũ
-        assert d["artifact_urls"] == [
-            f"https://minio/presigned/rag-assets/{d['metadata']['document_id']}/img1.png"
-        ]
-    # chunk có asset_key (ảnh pdf) vẫn giữ artifact_url riêng, trùng URL doc
+    crawl = [
+        d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000007"
+    ]
+    assert crawl
+    assert all(
+        d["artifact_urls"]
+        == ["https://minio/presigned/rag-assets/64b000000000000000000007/img1.png"]
+        for d in crawl
+    )
+    non_crawl = [
+        d for d in docs if d["metadata"]["document_id"] != "64b000000000000000000007"
+    ]
+    assert non_crawl
+    assert all(d["artifact_urls"] == [] for d in non_crawl)
+    assert store.presign_doc_calls == ["64b000000000000000000007"]
+    # chunk ảnh PDF vẫn giữ artifact_url riêng.
     image_doc = next(d for d in docs if d["modality"] == "image")
-    assert image_doc["artifact_url"] == image_doc["artifact_urls"][0]
+    assert image_doc["artifact_url"] == (
+        "https://minio/presigned/rag-assets/64b000000000000000000001/img1.png"
+    )
 
 
 async def test_artifact_urls_chunk_payload_wins_no_presign(client, app, fake_pipeline):
@@ -395,18 +415,25 @@ async def test_artifact_urls_chunk_payload_wins_no_presign(client, app, fake_pip
     assert "64b000000000000000000099" not in store.presign_doc_calls
 
 
-async def test_artifact_urls_presigned_once_per_doc(client, app):
-    """N chunk cùng doc -> presign_doc_images chạy 1 lần, không N lần list MinIO."""
+async def test_artifact_urls_presigned_once_per_doc(client, app, fake_vector_store):
+    """N chunk cùng doc crawl -> presign_doc_images chạy 1 lần, không N lần list MinIO."""
+    for i in range(3):
+        fake_vector_store.points[f"crawl-{i}"] = {
+            "doc_id": "64b000000000000000000007",
+            "content": f"crawl chunk {i}",
+            "modality": "text",
+            "chunk_id": f"crawl-{i}",
+        }
     store = _ImageAssetStore()
     app.dependency_overrides[rag_routes.get_asset_store] = lambda: store
     docs = (await client.post("/v2/rag/", json={**BODY, "top_k": 10})).json()[
         "documents"
     ]
     same_doc = [
-        d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000001"
+        d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000007"
     ]
     assert len(same_doc) >= 2
-    assert store.presign_doc_calls.count("64b000000000000000000001") == 1
+    assert store.presign_doc_calls.count("64b000000000000000000007") == 1
 
 
 async def test_artifact_urls_empty_for_unresolved_doc(client, app, fake_vector_store):
@@ -459,13 +486,22 @@ async def test_search_empty_sparse_falls_back_dense_only(client, app, fake_pipel
     assert spy.search_sparse[0] is None
 
 
-async def test_stream_includes_artifact_urls(client, app):
+async def test_stream_includes_artifact_urls_only_for_crawl(client, app):
     app.dependency_overrides[rag_routes.get_asset_store] = lambda: _ImageAssetStore()
     resp = await client.post("/v2/rag/stream", json=BODY)
     rows = [json.loads(line) for line in resp.text.splitlines() if line]
     docs = [doc for row in rows for doc in row.get("documents", [])]
     assert docs
-    assert all(d.get("artifact_urls") for d in docs)
+    crawl = [
+        d for d in docs if d["metadata"]["document_id"] == "64b000000000000000000007"
+    ]
+    assert crawl
+    assert all(d.get("artifact_urls") for d in crawl)
+    assert all(
+        not d.get("artifact_urls")
+        for d in docs
+        if d["metadata"]["document_id"] != "64b000000000000000000007"
+    )
 
 
 async def test_stream_emits_ndjson(client):

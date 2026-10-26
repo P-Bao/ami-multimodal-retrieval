@@ -1,7 +1,13 @@
-"""Live integration test for top_k=5 retrieval recall over indexed documents in Qdrant.
+"""Live integration test for retrieval recall over indexed documents in Qdrant.
 
-Requires running ami-rag stack (API server on port 8009, Qdrant, embed & rerank).
-Automatically skips if API server is unreachable.
+Calls `POST /v2/rag/` on a running ami-rag stack and reports Hit@5 / Hit@20 /
+Hit@40 + MRR per modality (text/table/image). Skips every test if `/readyz`
+does not return 200.
+
+Env (read directly from `os.environ`, pytest does not load `.env`):
+    RAG_BASE_URL  API root (default http://localhost:8009)
+    RAG_API_KEY   bearer token (empty = no auth)
+    RAG_TIMEOUT   per-request timeout in seconds (default 60)
 """
 
 import json
@@ -31,13 +37,14 @@ def _check_service_ready() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        not _check_service_ready(),
-        reason=f"ami-rag API server is not accessible or not ready at {BASE_URL}",
-    ),
-]
+pytestmark = pytest.mark.live
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _require_live_service():
+    """Check readiness lazily so `-m "not live"` / `--collect-only` never hit the network."""
+    if not _check_service_ready():
+        pytest.skip(f"ami-rag API server is not accessible or not ready at {BASE_URL}")
 
 
 def _build_params():
@@ -69,8 +76,8 @@ def _check_hit(case: dict, documents: list[dict]) -> tuple[bool, int]:
 def run_case(case: dict, top_k: int = 5) -> dict:
     """Run one case against the live API and report the outcome.
 
-    Shared by the pytest tests below and by `scripts/run_fusion_bench.py`, so a
-    strategy comparison and the official assertions score cases identically.
+    Shared by the pytest tests below and by `scripts/export_live_results.py`, so
+    an exported run and the official assertions score cases identically.
     """
     headers = {"Content-Type": "application/json"}
     if API_KEY:
