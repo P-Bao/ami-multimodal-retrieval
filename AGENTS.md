@@ -119,6 +119,7 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`.
 - Caption ảnh (`docs/ami_service.md` §5.3): `IMAGE_DESCRIBE_MODE` `auto|gemini|vision|none`; ảnh được materialize từ MinIO sang temp dir (`img_path`) trước khi gọi processor — đã fix bug vision đọc temp dir đã xoá. Deploy máy A cần `CAPTION_LLM_API_KEY` (env) để bật Gemini; mô tả ảnh đổi → `ami-rag reindex --all --from-stage describe`.
 - Chunk (docs §5.5): `chunk_text` v2 + `_build_chunks` gom item text liên tiếp + prefix tiêu đề doc; `CHUNK_MIN_CHARS` (200) gộp chunk mồ côi. `CHUNKER_VERSION` là **tên collection** — đổi ⇒ phải `reindex --all --from-stage chunk` (không gọi LLM) rồi `cleanup --stale-models`.
 - Chẩn đoán retrieval: `python scripts/diagnose_query.py --query "..."` (chỉ đọc Qdrant + embed/rerank, không Gemini). Ngoài máy Docker phải override `QDRANT_URL=http://172.23.0.9:6333` (pl_data_qdrant) và `MINIO_ENDPOINT=172.23.0.12:9000` — tên service `qdrant`/`minio` không resolve từ host.
+- Live retrieval test (`docs/ami_service.md` §10.1): `make test-live` (= `uv run pytest -q -m live tests/test_retrieval_recall_live.py`), đo Hit@5/20/40 + MRR theo modality; env `RAG_BASE_URL`/`RAG_API_KEY`/`RAG_TIMEOUT` đọc trực tiếp `os.environ` (không auto-load `.env`); tự skip nếu `/readyz` != 200; case `xfail` nằm trong `tests/retrieval_cases.json`. CI và `make test-lib` chạy `-m "not live"`.
 
 ## Bẫy đã biết (bắt buộc nhớ)
 - **`tests/__init__.py` phải tồn tại**: site-packages có package `tests` shadow local dir → `tests.ami_service` import lỗi nếu thiếu.

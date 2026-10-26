@@ -31,4 +31,4 @@ jobs:
                 pip install pytest pytest-asyncio
 
             - name: Run tests
-              run: pytest tests/ -v
+              run: pytest tests/ -v -m "not live"
