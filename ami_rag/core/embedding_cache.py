@@ -20,22 +20,36 @@ class EmbeddingCache:
         )
         self._conn.commit()
 
-    def get_many(self, keys: list[str]) -> dict[str, list[float]]:
-        out: dict[str, list[float]] = {}
+    def get_many(
+        self, keys: list[str]
+    ) -> dict[str, list[float] | list[list[float]]]:
+        out: dict[str, list[float] | list[list[float]]] = {}
         for key in set(keys):
             row = self._conn.execute(
                 "SELECT dim, vector FROM embeddings WHERE key = ?", (key,)
             ).fetchone()
             if row:
                 dim, blob = row
-                out[key] = list(struct.unpack(f"<{dim}f", blob))
+                if dim < 0:
+                    # multi-vector (vintern): dim = -(số token vector), blob
+                    # chứa flat tất cả token vector cùng kích thước.
+                    flat = list(struct.unpack(f"<{len(blob) // 4}f", blob))
+                    d = len(flat) // -dim
+                    out[key] = [flat[i * d : (i + 1) * d] for i in range(-dim)]
+                else:
+                    out[key] = list(struct.unpack(f"<{dim}f", blob))
         return out
 
-    def put_many(self, mapping: dict[str, list[float]]) -> None:
-        rows = [
-            (key, len(vec), struct.pack(f"<{len(vec)}f", *vec))
-            for key, vec in mapping.items()
-        ]
+    def put_many(self, mapping: dict[str, list[float] | list[list[float]]]) -> None:
+        rows = []
+        for key, vec in mapping.items():
+            if vec and isinstance(vec[0], list):
+                # multi-vector: pack flat (token vector cùng dim theo contract
+                # server), cột dim = -(số token) làm sentinel format.
+                flat = [f for token in vec for f in token]
+                rows.append((key, -len(vec), struct.pack(f"<{len(flat)}f", *flat)))
+            else:
+                rows.append((key, len(vec), struct.pack(f"<{len(vec)}f", *vec)))
         self._conn.executemany(
             "INSERT OR REPLACE INTO embeddings (key, dim, vector) VALUES (?, ?, ?)",
             rows,

@@ -180,6 +180,46 @@ async def test_embed_documents_preserves_order_and_returns_multivector():
     assert [it["text"] for it in server.requests[0]] == ["a", "b", "c"]
 
 
+def test_embedding_cache_flat_and_nested_roundtrip(tmp_path):
+    """Cache SQLite phải chứa được cả vector flat lẫn multi-vector lồng.
+
+    Bug thật: put_many struct.pack trực tiếp list-of-lists -> struct.error
+    "required argument is not a float", mọi doc fail ở stage embed.
+    """
+    from ami_rag.core.embedding_cache import EmbeddingCache
+
+    cache = EmbeddingCache(tmp_path / "c.db")
+    flat = [0.5, -1.25, 2.0]
+    nested = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    cache.put_many({"k1": flat, "k2": nested})
+    out = cache.get_many(["k1", "k2", "missing"])
+    # blob float32 -> so xấp xỉ (0.1 không biểu diễn chính xác trong 32-bit);
+    # pytest.approx không hỗ trợ list lồng -> so từng token vector
+    assert out["k1"] == pytest.approx(flat)
+    assert len(out["k2"]) == 2
+    for got, want in zip(out["k2"], nested):
+        assert got == pytest.approx(want)
+    assert "missing" not in out
+
+
+async def test_embed_documents_cache_roundtrip_multivector(tmp_path):
+    """embed_documents lần 2 trúng cache: cùng shape multi-vector, không HTTP."""
+    from ami_rag.core.embedding_cache import EmbeddingCache
+
+    server = FakeServer()
+    embedder = _make_embedder(server, cache=EmbeddingCache(tmp_path / "cache.db"))
+    await embedder.verify()
+    vecs1 = await embedder.embed_documents(["tài liệu thứ nhất"])
+    vecs2 = await embedder.embed_documents(["tài liệu thứ nhất"])
+    assert len(server.requests) == 1  # lượt 2 đọc cache, không gọi /embed
+    # blob cache float32 -> so xấp xỉ; approx không nhận list lồng -> flat
+    from itertools import chain
+
+    flat = lambda vs: list(chain.from_iterable(chain.from_iterable(vs)))
+    assert flat(vecs2) == pytest.approx(flat(vecs1))
+    assert isinstance(vecs2[0][0], list) and len(vecs2[0][0]) == DIM
+
+
 async def test_embed_documents_respects_batch_size():
     server = FakeServer()
     embedder = _make_embedder(server, batch_size=2)
