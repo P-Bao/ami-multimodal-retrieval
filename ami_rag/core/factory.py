@@ -214,18 +214,18 @@ def get_asset_store():
 
 
 def build_embedder(settings: Settings):
-    """Build embedder theo EMBED_BACKEND: custom (qwen server) | bge (BAAI/bge-m3) | openai (vLLM)."""
+    """Build embedder theo EMBED_BACKEND: vintern (multi-vector) | custom (qwen server) | openai (vLLM)."""
     from ami_rag.settings import resolve_embed_backend
 
     backend = resolve_embed_backend(settings)
+    if backend == "vintern":
+        from ami_rag.core.vintern_embedder import build_vintern_embedder
+
+        return build_vintern_embedder(settings)
     if backend == "custom":
         from ami_rag.core.remote_embedder import build_remote_embedder
 
         return build_remote_embedder(settings)
-    if backend == "bge":
-        from ami_rag.core.bge_embedder import build_bge_embedder
-
-        return build_bge_embedder(settings)
     from ami_rag.core.openai_embedder import build_openai_embedder
 
     return build_openai_embedder(settings)

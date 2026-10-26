@@ -1,11 +1,11 @@
-"""Base dùng chung cho 3 embedder client HTTP (máy B).
+"""Base dùng chung cho các embedder client HTTP (máy B).
 
 Gom phần trùng lặp giữa ``RemoteEmbedder`` (qwen-embedding-server),
-``OpenAIEmbedder`` (gateway nemotron-vl-vllm) và ``BGEM3Embedder``
-(embedding-server bge-m3): init client, retry exponential backoff + jitter
-CHỈ cho lỗi tạm thời (timeout/5xx/429/connect — không bao giờ 4xx), circuit
-breaker N lần liên tiếp, cache embedding, chia nhóm batch song song.
-Subclass cung cấp handshake (``verify``), payload và cách đọc vector từ
+``VinternEmbedder`` (vintern-embedding-server multi-vector) và
+``OpenAIEmbedder`` (gateway nemotron-vl-vllm): init client, retry exponential
+backoff + jitter CHỈ cho lỗi tạm thời (timeout/5xx/429/connect — không bao giờ
+4xx), circuit breaker N lần liên tiếp, cache embedding, chia nhóm batch song
+song. Subclass cung cấp handshake (``verify``), payload và cách đọc vector từ
 response (``_check_response`` / ``_fill_vectors`` / ``_post_embed``).
 """
 
@@ -42,7 +42,7 @@ class _Cache(Protocol):
 class BaseRemoteEmbedder:
     """HTTP plumbing dùng chung; ``model``/``dim`` được verify ở handshake."""
 
-    # Mã HTTP coi là "input vượt budget" (bge server trả thêm 422)
+    # Mã HTTP coi là "input vượt budget"
     too_long_statuses: tuple[int, ...] = (413,)
 
     def __init__(
@@ -170,7 +170,7 @@ class BaseRemoteEmbedder:
         return self.backoff_base * (2 ** (attempt - 1)) + random.uniform(0, 0.1)
 
     # ------------------------------------------------------------------
-    # Cache key / clamp / batching (dùng chung remote + openai; bge truyền str)
+    # Cache key / clamp / batching (dùng chung remote + vintern + openai)
     # ------------------------------------------------------------------
     def _cache_key(self, item: str | dict) -> str:
         if isinstance(item, dict):
@@ -249,8 +249,7 @@ class BaseRemoteEmbedder:
         return batches
 
     # ------------------------------------------------------------------
-    # Luồng embed_documents dùng chung (remote + openai; bge override riêng
-    # vì cần dense+sparse trong một lượt gọi)
+    # Luồng embed_documents dùng chung (remote + vintern + openai)
     # ------------------------------------------------------------------
     async def embed_documents(self, items: list[str | dict]) -> list[list[float]]:
         """Embed danh sách văn bản / multimodal items (có cache). Giữ thứ tự đầu vào."""

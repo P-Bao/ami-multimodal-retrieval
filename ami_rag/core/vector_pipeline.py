@@ -1137,9 +1137,9 @@ class VectorPipeline(PipelineRunner):
         await self.vector_store.delete_by_doc(self.collection, doc_id)
         items = await self._prepare_embed_items(chunks)
         INGEST_EMBED_ITEMS_TOTAL.inc(len(items))
-        # shortcut: count_cache_hits đọc cache dense trước khi embed; nhánh sparse
-        # (BGE-M3 khoá cache theo model|dim) dùng use_cache=False nên hits ~0 khi
-        # EMBED_RETURN_SPARSE=true - thêm sparse cache thì bỏ shortcut này.
+        # shortcut: count_cache_hits đọc cache trước khi embed; embedder sparse
+        # (legacy) gọi embed_documents_sparse use_cache=False nên hits ~0 -
+        # thêm sparse cache thì bỏ shortcut này.
         INGEST_EMBED_CACHE_HITS_TOTAL.inc(self.embedder.count_cache_hits(items))
         try:
             if getattr(self.embedder, "embed_documents_sparse", None):

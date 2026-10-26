@@ -1,7 +1,8 @@
-"""Test default settings BGE (BGE-M3 embed + BGE reranker) + resolve backend.
+"""Test default settings Vintern (multi-vector embed + BGE reranker) + resolve backend.
 
 Contract mặc định mới:
-- embed BGE-M3 qua HTTP server :8008 (backend "bge", dense 1024 + sparse);
+- embed Vintern-Embedding-1B qua HTTP server :8007 (backend "vintern",
+  multi-vector per-token dim 128, nhận ảnh image_b64);
 - rerank BGE text-only :8010 (backend "legacy", RERANK_MULTIMODAL=False).
 """
 
@@ -18,28 +19,31 @@ class NS:
         self.RERANK_MODEL = kw.get("RERANK_MODEL", "")
 
 
-def test_default_settings_bge():
+def test_default_settings_vintern():
     s = Settings(_env_file=None)
-    assert s.EMBED_BACKEND == "bge"
-    assert s.EMBED_SERVER_URL == "http://localhost:8008"
-    assert s.EMBED_MODEL == "BAAI/bge-m3"
-    assert s.EMBED_DIM == 1024
+    assert s.EMBED_BACKEND == "vintern"
+    assert s.EMBED_SERVER_URL == "http://localhost:8007"
+    assert s.EMBED_MODEL == "5CD-AI/Vintern-Embedding-1B"
+    assert s.EMBED_DIM == 128
     assert s.EMBED_MAX_INPUT_TOKENS == 8192
-    assert s.EMBED_IMAGE_TOKEN_RESERVE == 0
-    assert s.EMBED_RETURN_SPARSE is True
-    assert s.EMBED_BATCH_SIZE == 32
+    assert s.EMBED_IMAGE_TOKEN_RESERVE == 1792
+    assert s.EMBED_BATCH_SIZE == 8
+    assert s.EMBED_MAX_CONCURRENCY == 2
     assert s.RERANK_BACKEND == "legacy"
     assert s.RERANK_BASE_URL == "http://localhost:8010"
     assert s.RERANK_MODEL == "BAAI/bge-reranker-v2-m3"
     assert s.RERANK_MULTIMODAL is False
 
 
-def test_resolve_embed_backend_explicit_bge():
-    assert resolve_embed_backend(NS(EMBED_BACKEND="bge")) == "bge"
+def test_resolve_embed_backend_explicit_vintern():
+    assert resolve_embed_backend(NS(EMBED_BACKEND="vintern")) == "vintern"
 
 
-def test_resolve_embed_backend_auto_bge_by_model():
-    assert resolve_embed_backend(NS(EMBED_MODEL="BAAI/bge-m3")) == "bge"
+def test_resolve_embed_backend_auto_vintern_by_model():
+    assert (
+        resolve_embed_backend(NS(EMBED_MODEL="5CD-AI/Vintern-Embedding-1B"))
+        == "vintern"
+    )
 
 
 def test_resolve_embed_backend_auto_qwen_custom():

@@ -43,32 +43,31 @@ class Settings(BaseSettings):
     CAPTION_LLM_LANGUAGE: str = "vi"
 
     # --- Remote embedding server (máy B) ---
-    # backend "bge": embedding-server BAAI/bge-m3 (:8008) — dense 1024 + sparse;
+    # backend "vintern": vintern-embedding-server multi-vector
+    # 5CD-AI/Vintern-Embedding-1B (:8007) — per-token vectors dim 128;
     # backend "custom": qwen-embedding-server (/info + /embed);
     # backend "openai": gateway nemotron-vl-vllm (máy B) — /health + /v1/embeddings
     # với {"input", "input_type"} cho nvidia/llama-nemotron-embed-vl-1b-v2.
-    EMBED_SERVER_URL: str = "http://localhost:8008"
+    EMBED_SERVER_URL: str = "http://localhost:8007"
     # Chỉ từ env - không ghi token vào file config/commit
     EMBED_SERVER_TOKEN: str = ""
-    EMBED_MODEL: str = "BAAI/bge-m3"
-    # auto | custom | openai | bge (auto: model chứa "bge" -> bge, prefix "Qwen/" -> custom, còn lại -> openai)
-    EMBED_BACKEND: str = "bge"
+    EMBED_MODEL: str = "5CD-AI/Vintern-Embedding-1B"
+    # auto | vintern | custom | openai (auto: model chứa "vintern" -> vintern, prefix "Qwen/" -> custom, còn lại -> openai)
+    EMBED_BACKEND: str = "vintern"
     # Dùng để xác minh với server lúc handshake (dim thực tế do server quyết định)
-    EMBED_DIM: int = 1024
+    EMBED_DIM: int = 128
     EMBED_TIMEOUT: int = 60
-    EMBED_BATCH_SIZE: int = 32  # server giới hạn tối đa 64 text/request
-    EMBED_MAX_CONCURRENCY: int = 4
+    EMBED_BATCH_SIZE: int = 8  # server giới hạn tối đa 8 item/request
+    EMBED_MAX_CONCURRENCY: int = 2
     EMBED_RETRIES: int = 3
     EMBED_CACHE_ENABLED: bool = True
     EMBED_CACHE_PATH: str = "./embed_cache.db"
     # Guard kích thước input embed (client-side): item vượt budget bị head-truncate
-    # trước khi gửi (content đầy đủ vẫn lưu Qdrant). Default tính cho max seq 8192
-    # của BGE-M3 - server phải chạy 8192, còn không thì giảm qua env.
+    # trước khi gửi (content đầy đủ vẫn lưu Qdrant). Query dài hơn bị cắt ~100
+    # token phía processor của server.
     EMBED_MAX_INPUT_TOKENS: int = 8192
-    # BGE-M3 text-only không xử lý ảnh -> không cần trừ budget token ảnh
-    EMBED_IMAGE_TOKEN_RESERVE: int = 0
-    # BGE-M3 trả thêm vector sparse (lexical weights) kèm dense
-    EMBED_RETURN_SPARSE: bool = True
+    # Vintern nhận ảnh bytes (image_b64) -> trừ budget token ảnh cho item kèm ảnh
+    EMBED_IMAGE_TOKEN_RESERVE: int = 1792
 
     MONGO_URI: str = "mongodb://localhost:27017/?directConnection=true"
     # Shares organization_db with the backend; every RAG collection is prefixed `multimodal_`
@@ -200,21 +199,21 @@ class Settings(BaseSettings):
 def resolve_embed_backend(settings) -> str:
     """Resolve EMBED_BACKEND: explicit value, else auto-infer từ EMBED_MODEL.
 
-    - EMBED_BACKEND đặt rõ -> dùng luôn (custom | openai | bge).
-    - auto: model chứa "bge" -> "bge" (embedding-server BGE-M3 :8008),
-      prefix "Qwen/" -> "custom" (qwen-embedding-server contract),
-      còn lại -> "openai" (vLLM OpenAI-compatible, Nemotron VL embed).
+    - EMBED_BACKEND đặt rõ -> dùng luôn (vintern | custom | openai).
+    - auto: model chứa "vintern" -> "vintern" (vintern-embedding-server
+      multi-vector :8007), prefix "Qwen/" -> "custom" (qwen-embedding-server
+      contract), còn lại -> "openai" (vLLM OpenAI-compatible, Nemotron VL embed).
     """
     backend = (getattr(settings, "EMBED_BACKEND", "auto") or "auto").lower()
     if backend != "auto":
-        if backend not in ("custom", "openai", "bge"):
+        if backend not in ("vintern", "custom", "openai"):
             raise ValueError(
-                f"EMBED_BACKEND không hợp lệ: {backend} (custom | openai | bge | auto)"
+                f"EMBED_BACKEND không hợp lệ: {backend} (vintern | custom | openai | auto)"
             )
         return backend
     model = getattr(settings, "EMBED_MODEL", "")
-    if "bge" in model.lower():
-        return "bge"
+    if "vintern" in model.lower():
+        return "vintern"
     return "custom" if model.startswith("Qwen/") else "openai"
 
 
