@@ -1403,3 +1403,148 @@ async def test_describe_vision_mode_uses_processor(
     img_item = img_calls[0][1]
     assert img_item["img_path"] != "gone.png", "materialize phải gán img_path temp"
     assert not Path(img_item["img_path"]).exists(), "temp dir xoá sau stage"
+
+
+# ------------------------------------------------------- vintern multi-vector
+
+
+def _vintern_pipeline(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo, **kw
+):
+    from tests.ami_service.conftest import FakeVinternEmbedder
+
+    settings = Settings(
+        _env_file=None,
+        WORKSPACE="test",
+        EMBED_MODEL="5CD-AI/Vintern-Embedding-1B",
+        EMBED_DIM=128,
+        CHUNKER_VERSION="v1",
+        PARSER="mineru",
+        **kw,
+    )
+    embedder = FakeVinternEmbedder()
+    return (
+        VectorPipeline(
+            settings,
+            embedder=embedder,
+            vector_store=fake_vector_store,
+            asset_store=fake_asset_store,
+            store=fake_status_store,
+            docs_repo=fake_docs_repo,
+            parser=FakeParser(),
+        ),
+        embedder,
+    )
+
+
+async def test_prepare_embed_items_attaches_image_b64_for_vintern(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+):
+    """supports_images: chunk ảnh có bytes -> item image-only (KHÔNG text vì server 422);
+    chunk text/table giữ text item (table không gửi table_body kèm ảnh)."""
+    from ami_rag.core.vector_pipeline import Chunk
+
+    pipeline, _ = _vintern_pipeline(
+        fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+    )
+    chunks = [
+        Chunk(id="c1", content="text", modality="text", page_idx=0, is_multimodal=False),
+        Chunk(
+            id="c2",
+            content="caption ảnh",
+            modality="image",
+            page_idx=1,
+            is_multimodal=True,
+            asset_key="rag-assets/d/img1.png",
+        ),
+        Chunk(
+            id="c3",
+            content="[Table Content]",
+            modality="table",
+            page_idx=2,
+            is_multimodal=True,
+            asset_key="rag-assets/d/t1.png",
+        ),
+    ]
+    items = await pipeline._prepare_embed_items(chunks)
+    assert items[0] == {"type": "document", "text": "text"}
+    # ảnh: image-only — không có key "text"
+    assert items[1] == {
+        "type": "document",
+        "image_b64": base64.b64encode(b"\x89PNG-fake-bytes").decode("ascii"),
+    }
+    # table: text item dù có asset_key (ảnh table không embed bytes)
+    assert items[2] == {"type": "document", "text": "[Table Content]"}
+
+
+async def test_prepare_embed_items_image_missing_bytes_falls_back_caption(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+):
+    """Fetch bytes None/lỗi -> fallback caption text item, không crash."""
+    from ami_rag.core.vector_pipeline import Chunk
+
+    pipeline, _ = _vintern_pipeline(
+        fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+    )
+    # FakeAssetStore trả bytes cho mọi key trừ key "đã xoá"
+    fake_asset_store.deleted_assets.append("rag-assets/d/missing.png")
+    chunks = [
+        Chunk(
+            id="c1",
+            content="caption dự phòng",
+            modality="image",
+            page_idx=0,
+            is_multimodal=True,
+            asset_key="rag-assets/d/missing.png",
+        ),
+    ]
+    items = await pipeline._prepare_embed_items(chunks)
+    assert items == [{"type": "document", "text": "caption dự phòng"}]
+
+
+async def test_full_run_vintern_multivector_dense_only(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+):
+    """Full-run FakeVinternEmbedder: ensure_collection multivector, record vector
+    multi (list token) + sparse None, không gọi embed_documents_sparse."""
+    pipeline, embedder = _vintern_pipeline(
+        fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+    )
+    ensure_kw: list[dict] = []
+    original_ensure = fake_vector_store.ensure_collection
+
+    async def _ensure(name, dim, **kwargs):
+        ensure_kw.append(kwargs)
+        return await original_ensure(name, dim, **kwargs)
+
+    fake_vector_store.ensure_collection = _ensure
+    seen: list = []
+    original_upsert = fake_vector_store.upsert
+
+    async def _spy(collection, records):
+        seen.extend(records)
+        return await original_upsert(collection, records)
+
+    fake_vector_store.upsert = _spy
+    fake_status_store.ensure_pending(PDF_ID)
+    # preflight_embed là nơi gọi ensure_collection (CLI chạy trước run)
+    await pipeline.preflight_embed()
+
+    outcome = await pipeline.run(PDF_ID)
+
+    assert outcome.ok and outcome.stage == "indexed"
+    assert ensure_kw and ensure_kw[0]["multivector"] is True
+    assert ensure_kw[0]["sparse"] is False
+    # chunk ảnh có asset_key -> item embed image-only
+    image_items = [
+        it
+        for batch in embedder.embedded_items
+        for it in batch
+        if isinstance(it, dict) and it.get("image_b64")
+    ]
+    assert image_items and "text" not in image_items[0]
+    # record: vector multi-vector lồng, sparse None (dense-only)
+    assert seen
+    for r in seen:
+        assert r.sparse is None
+        assert isinstance(r.vector, list) and isinstance(r.vector[0], list)

@@ -24,6 +24,7 @@ Data giữa các stage nằm trong MinIO: `{doc_id}/content_list.json`,
 """
 
 import asyncio
+import base64
 import hashlib
 import itertools
 import logging
@@ -1081,11 +1082,43 @@ class VectorPipeline(PipelineRunner):
         )
 
     # ------------------------------------------------------------------
-    async def _prepare_embed_items(self, chunks: list[Chunk]) -> list[str]:
-        """Caption-only: luôn trả list[str] (c.content) — không nạp ảnh asset cho embed.
+    async def _prepare_embed_items(self, chunks: list[Chunk]) -> list[str | dict]:
+        """Item embed theo khả năng embedder.
 
-        (BGE-M3 không nhận ảnh; ảnh đi qua caption describe stage.)"""
-        return [c.content for c in chunks]
+        - ``supports_images`` (Vintern multi-vector): chunk ảnh có asset_key
+          được gắn ``image_b64`` (fetch MinIO; lỗi/thiếu bytes -> fallback text
+          caption). Item ảnh gửi **image-only** (server 422 nếu kèm text).
+          Chunk text/table giữ text item (table KHÔNG gửi table_body kèm ảnh).
+        - không supports_images (legacy single-vector text-only): caption-only
+          ``list[str]`` như cũ - ảnh đi qua caption describe stage.
+        """
+        if not getattr(self.embedder, "supports_images", False):
+            return [c.content for c in chunks]
+
+        items: list[str | dict] = []
+        for c in chunks:
+            if c.modality == "image" and c.asset_key and hasattr(
+                self.asset_store, "get_bytes"
+            ):
+                try:
+                    data = await asyncio.to_thread(self.asset_store.get_bytes, c.asset_key)
+                except Exception as exc:
+                    logger.warning("fetch ảnh %s cho embed lỗi: %s", c.asset_key, exc)
+                    data = None
+                if data:
+                    items.append(
+                        {
+                            "type": "document",
+                            "image_b64": base64.b64encode(data).decode("ascii"),
+                        }
+                    )
+                    continue
+                logger.warning(
+                    "chunk ảnh %s thiếu bytes -> embed fallback caption text",
+                    c.asset_key,
+                )
+            items.append({"type": "document", "text": c.content})
+        return items
 
     # ------------------------------------------------------------------
     # Stage: embed (máy B qua RemoteEmbedder) + verify (idempotent)
@@ -1146,7 +1179,12 @@ class VectorPipeline(PipelineRunner):
         await self.embedder.verify()
         if getattr(self.embedder, "embed_query_sparse", None):
             await self.embedder.embed_query_sparse("probe")
-        await self.vector_store.ensure_collection(self.collection, self.embedder.dim)
+        await self.vector_store.ensure_collection(
+            self.collection,
+            self.embedder.dim,
+            multivector=getattr(self.embedder, "is_multivector", False),
+            sparse=not getattr(self.embedder, "is_multivector", False),
+        )
 
     async def run(
         self, doc_id: str, *, from_stage: str | None = None, dry_run: bool = False
@@ -1285,7 +1323,12 @@ class VectorPipeline(PipelineRunner):
     ) -> StageOutcome:
         """Handshake (GET /info) + đếm chunk / cache hits. Không POST /embed, không ghi."""
         await self.embedder.verify()
-        await self.vector_store.ensure_collection(self.collection, self.embedder.dim)
+        await self.vector_store.ensure_collection(
+            self.collection,
+            self.embedder.dim,
+            multivector=getattr(self.embedder, "is_multivector", False),
+            sparse=not getattr(self.embedder, "is_multivector", False),
+        )
 
         content_list = await asyncio.to_thread(
             self.asset_store.load_content_list, doc_id

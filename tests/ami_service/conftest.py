@@ -147,6 +147,35 @@ class FakeEmbedder:
         pass
 
 
+class FakeVinternEmbedder:
+    """Stand-in cho VinternEmbedder (multi-vector + image-only items, 0 mạng)."""
+
+    supports_images = True
+    is_multivector = True
+
+    def __init__(self, dim=128):
+        self.dim = dim
+        self.embedded_items: list[list[str | dict]] = []
+        self.embedded_queries: list[str] = []
+
+    async def verify(self) -> dict:
+        return {"model_name": "5CD-AI/Vintern-Embedding-1B", "dim": self.dim}
+
+    async def embed_documents(self, items):
+        self.embedded_items.append(list(items))
+        return [[[0.1] * self.dim] for _ in items]
+
+    async def embed_query(self, text):
+        self.embedded_queries.append(text)
+        return [[0.2] * self.dim]
+
+    def count_cache_hits(self, items):
+        return 0
+
+    async def close(self):
+        pass
+
+
 class FakeVectorStore:
     """Stand-in for VectorStore (in-memory)."""
 
@@ -157,11 +186,11 @@ class FakeVectorStore:
         self.search_limits: list[int] = []
 
     async def ensure_collection(
-        self, name: str, dim: int, *, sparse: bool = True
+        self, name: str, dim: int, *, sparse: bool = True, multivector: bool = False
     ) -> None:
         self.collections[name] = dim
         # fake không có khái niệm legacy: chỉ ghi nhận sparse đã bật
-        if sparse:
+        if sparse and not multivector:
             self.sparse_collections.add(name)
 
     async def upsert(self, collection, records):
