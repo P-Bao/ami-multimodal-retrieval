@@ -35,8 +35,12 @@ CIRCUIT_THRESHOLD = 5
 
 
 class _Cache(Protocol):
-    def get_many(self, keys: list[str]) -> dict[str, list[float]]: ...
-    def put_many(self, mapping: dict[str, list[float]]) -> None: ...
+    def get_many(
+        self, keys: list[str]
+    ) -> dict[str, list[float] | list[list[float]]]: ...
+    def put_many(
+        self, mapping: dict[str, list[float] | list[list[float]]]
+    ) -> None: ...
 
 
 class BaseRemoteEmbedder:

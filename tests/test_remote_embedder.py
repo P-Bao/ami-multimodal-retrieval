@@ -372,3 +372,23 @@ async def test_embed_documents_truncates_multimodal_with_image_reserve():
     # budget (300 - 100) * 3 chars/token; ảnh giữ nguyên
     assert item["image_b64"] == "aW1n"
     assert item["text"] == "b" * 600
+
+
+def test_embedding_cache_flat_and_nested_roundtrip(tmp_path):
+    """Cache SQLite chứa được cả vector flat lẫn multi-vector lồng (vintern).
+
+    Bug thật: put_many struct.pack trực tiếp list-of-lists -> struct.error
+    "required argument is not a float" ở stage embed.
+    """
+    cache = EmbeddingCache(tmp_path / "c.db")
+    flat = [0.5, -1.25, 2.0]
+    nested = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    cache.put_many({"k1": flat, "k2": nested})
+    out = cache.get_many(["k1", "k2", "missing"])
+    # blob float32 -> so xấp xỉ (0.1 không chính xác trong 32-bit);
+    # pytest.approx không hỗ trợ list lồng -> so từng token vector
+    assert out["k1"] == pytest.approx(flat)
+    assert len(out["k2"]) == 2
+    for got, want in zip(out["k2"], nested):
+        assert got == pytest.approx(want)
+    assert "missing" not in out
