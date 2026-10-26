@@ -71,6 +71,20 @@ def _named_info(dim=8):
     )
 
 
+def _multivector_info(dim=8):
+    return _info(
+        {
+            "dense": models.VectorParams(
+                size=dim,
+                distance=models.Distance.COSINE,
+                multivector_config=models.MultiVectorConfig(
+                    comparator=models.MultiVectorComparator.MAX_SIM
+                ),
+            )
+        }
+    )
+
+
 def _store(client):
     return QdrantVectorStore("http://fake:6333", client=client)
 
@@ -172,6 +186,90 @@ async def test_ensure_collection_existing_named_missing_sparse_raises():
     store = _store(stub)
     with pytest.raises(VectorStoreError):
         await store.ensure_collection("col", 8)
+
+
+# --------------------------------------------------------------- multivector
+
+
+async def test_ensure_collection_multivector_creates_max_sim_config():
+    stub = StubClient()
+    store = _store(stub)
+    await store.ensure_collection("col", 128, multivector=True)
+    kinds = [c[0] for c in stub.calls]
+    assert kinds == ["create_collection"]
+    _, name, vectors_config, sparse_config = stub.calls[0]
+    assert name == "col"
+    dense = vectors_config["dense"]
+    assert isinstance(dense, models.VectorParams)
+    assert dense.size == 128 and dense.distance == models.Distance.COSINE
+    assert (
+        dense.multivector_config.comparator == models.MultiVectorComparator.MAX_SIM
+    )
+    assert sparse_config is None  # multi-vector không tạo sparse
+
+
+async def test_ensure_collection_multivector_existing_without_config_raises():
+    stub = StubClient()
+    # collection single-vector có sẵn (sparse) -> thiếu multivector_config
+    stub.existing["col"] = _named_info(128)
+    store = _store(stub)
+    with pytest.raises(VectorStoreError) as exc:
+        await store.ensure_collection("col", 128, multivector=True)
+    assert "thiếu multivector_config" in str(exc.value)
+    assert "reindex" in str(exc.value)
+
+
+async def test_ensure_collection_multivector_existing_ok_and_legacy_raises():
+    store = _store(StubClient())
+    stub = store._client
+    stub.existing["col"] = _multivector_info(128)
+    await store.ensure_collection("col", 128, multivector=True)
+    assert stub.calls == []  # tương thích, không tạo lại
+
+    stub.existing["old"] = _legacy_info(8)
+    with pytest.raises(VectorStoreError):
+        await store.ensure_collection("old", 8, multivector=True)
+
+
+async def test_upsert_multivector_nested_vector_passthrough():
+    stub = StubClient()
+    store = _store(stub)
+    tokens = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+    await store.upsert("col", [ChunkRecord("m1", tokens, payload={"doc_id": "d"})])
+    upserts = [c for c in stub.calls if c[0] == "upsert"]
+    points = upserts[0][2]
+    vec = points[0].vector
+    assert isinstance(vec, dict) and list(vec) == ["dense"]
+    assert vec["dense"] == tokens  # lồng nguyên xi: [tokens][2]
+
+
+def test_point_estimate_counts_multivector_floats():
+    from types import SimpleNamespace
+
+    from ami_rag.core.vector_store import _point_estimate
+
+    tokens = [[0.1] * 128 for _ in range(64)]  # 64 token x 128 dim
+    single = [0.1] * 128
+    # _point_estimate nhận PointStruct (vector dict named "dense")
+    p_multi = SimpleNamespace(vector={"dense": tokens}, payload={})
+    p_single = SimpleNamespace(vector={"dense": single}, payload={})
+    # 64 token x 128 dim = 8192 float -> ước byte gồm toàn bộ float multi-vector
+    # (payload rỗng {} = 2 byte JSON)
+    assert _point_estimate(p_multi) == 64 * 128 * 32 + 2 + 256
+    assert _point_estimate(p_multi) > _point_estimate(p_single)
+
+
+async def test_search_multivector_query_goes_through_dense_path():
+    stub = StubClient()
+    stub.existing["col"] = _multivector_info(128)
+    store = _store(stub)
+    query_tokens = [[0.1] * 128, [0.2] * 128]
+    hits = await store.search("col", query_tokens, 5)
+    assert len(hits) == 1
+    _, kwargs = stub.calls[-1]
+    assert kwargs["using"] == "dense"
+    assert kwargs["query"] == query_tokens  # multi-vector truyền nguyên vị
+    assert "prefetch" not in kwargs
 
 
 # ------------------------------------------------------------------- upsert
