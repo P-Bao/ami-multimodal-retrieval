@@ -46,7 +46,7 @@ help:
 	@echo "  make dashboard-configmap  - Sinh ConfigMap dashboard cho Grafana sidecar"
 	@echo "  make dashboard-apply      - Apply dashboard ConfigMap + ServiceMonitor + PrometheusRule len cluster"
 	@echo "  make metrics-scrape-apply - Scrape metrics tu service Docker tren host"
-	@echo "  make clean            - Xoa cache va bytecode"
+	@echo "  make clean            - Xoa cache/bytecode + anh crawl con sot trong MinIO (best-effort)"
 
 # Cai dependencies (extra service + dev-dependencies: pytest, ruff).
 setup:

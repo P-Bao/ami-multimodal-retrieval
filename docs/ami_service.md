@@ -12,7 +12,7 @@ Redis Streams  rag:ingest  (consumer group ami-rag)
    ▼
 ami_rag worker  (ami-rag-worker, hoặc nhúng trong API khi WORKER_ENABLED=true)
     ├─ select_source(doc)                                          (mục 2)
-    │    ├─ mongo_text : text Mongo `content` → content_list = [text] (+ item image crawl khi có section 'Hình ảnh')
+    │    ├─ mongo_text : text Mongo `content` → content_list = [text kèm artifact_urls = URL ảnh gốc khi có section 'Hình ảnh']
     │    └─ minio_parse: tải file gốc từ MinIO → MinerU parse → content_list (text/image/table/equation)
     │         └─ PARSE_TEXT_SOURCE=backend_data: text/bảng dựng lại bằng pdfplumber/fitz + OCR service
     │            (fallback Vinter, mục 5.4); ảnh vẫn lấy từ MinerU
@@ -59,7 +59,7 @@ Hệ thống AI ──POST /v2/rag──▶ ami_rag API: embed_query dense+spars
 
 Doc `minio_parse` không có `file_path` thì lỗi (`ValueError`).
 
-**Ảnh crawl** (luôn bật, không có env tắt): bài crawl có section cuối dạng `**Hình ảnh:**` + các dòng `- <url ảnh>`. Parse stage tách section này (`ami_rag/workers/crawl_images.py::split_image_section` — chỉ nhận URL có đuôi ảnh, heading biến thể `**Hình ảnh:**`/`## HÌNH ẢNH`/`Hinh anh` đều nhận qua fold không dấu), tải từng ảnh về MinIO `rag-assets/{doc_id}/…` (idempotent, key = hash URL, timeout 60s/ảnh, semaphore 4) rồi append item `image` kèm `asset_key` — ảnh crawl đi tiếp qua describe (caption Gemini/VLM như ảnh pdf/docx, mục 5.3), chunk modality `image`, embed caption text (BGE-M3 text-only, không nhúng ảnh bytes) và presign `/admin` như ảnh thường. Block URL bị xoá khỏi text chunk. Ảnh lỗi bỏ qua từng con; không tải được con nào thì giữ nguyên text gốc. Bài không có section → chỉ 1 text item như cũ (không tải gì).
+**Ảnh crawl** (chỉ tách URL, không tải ảnh về MinIO nữa): bài crawl có section cuối dạng `**Hình ảnh:**` + các dòng `- <url ảnh>`. Parse stage tách section này (`ami_rag/workers/crawl_images.py::split_image_section` — chỉ nhận URL có đuôi ảnh, heading biến thể `**Hình ảnh:**`/`## HÌNH ẢNH`/`Hinh anh` đều nhận qua fold không dấu) và ghi URL gốc vào `artifact_urls` của text item — KHÔNG tải ảnh, không item `image`, ảnh crawl không qua describe/chunk/embed. Block URL bị xoá khỏi text chunk; strip rỗng (bài chỉ có section ảnh) thì giữ text gốc (URL còn trong text) vẫn kèm `artifact_urls`. Bài không có section → 1 text item như cũ. Ảnh crawl đã tải về MinIO trước đây dọn bằng `ami-rag cleanup --crawl-assets --yes`.
 
 ## 3. Dữ liệu
 
@@ -230,7 +230,7 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` / rỗng | |
 | | `MINIO_BUCKET` | `ami-data-documents` | |
 | | `MINIO_SECURE` | `false` | |
-| | `ASSET_PREFIX` | `rag-assets` | cũng là nơi ảnh crawl được tải về (`{doc_id}/…`) |
+| | `ASSET_PREFIX` | `rag-assets` | nơi ảnh crawl cũ (đã ngừng tải — dọn bằng `cleanup --crawl-assets`) và ảnh pdf/docx lưu (`{doc_id}/…`) |
 | | `MINIO_PRESIGN_EXPIRES` | `3600` | giây, cho `artifact_url`/`file_url` |
 | API | `API_HOST` / `API_PORT` | `0.0.0.0` / `8009` | |
 | | `RAG_API_KEY` | rỗng | rỗng = không auth |
@@ -326,7 +326,7 @@ Khuyến nghị:
 1. **Materialize** (`vector_pipeline._materialize_images`): với mọi image-item có `asset_key`, fetch bytes từ MinIO **song song** theo semaphore `CAPTION_LLM_MAX_CONCURRENCY` → ghi vào `tempfile.TemporaryDirectory()` (tên `sha1(asset_key)[:12]` + ext suy từ magic bytes) → tạo `describe_items` là shallow copy gán `img_path` = file tạm (item thiếu `asset_key` giữ `img_path` gốc). **`content_list` gốc không bị mutate** (chunk + `save_content_list` dùng bản gốc); temp dir được xoá trong `finally` sau khi describe xong.
 2. **Caption** (`factory._build_caption_func`): `AsyncOpenAI(base_url=CAPTION_LLM_BASE_URL, api_key=…)` — closure nhận `(prompt, system_prompt, image_data=<base64>, …)`, tái dùng `_openai_style_messages` dựng data URI (sniff mime png/webp/gif/jpeg). `ImageModalProcessor` vẫn là processor chạy mô tả (đọc file tạm, build prompt vision có caption/footnote/ngữ cảnh, parse JSON `detailed_description` + `entity_info`).
 
-Ảnh crawl (mục 2) cũng chỉ có `asset_key` (không có file local) nên đi qua đúng bước materialize + caption này như ảnh parse từ pdf/docx.
+Ảnh crawl không còn là item `image` nữa (mục 2 — chỉ còn URL gốc trong `artifact_urls` của chunk text), nên describe chỉ xử lý ảnh/table của pdf/docx.
 
 Chế độ (`IMAGE_DESCRIBE_MODE`, xem bảng mục 4): `gemini` (có key) → caption Gemini; `vision` → gửi ảnh cho Qwen VLM (`QWEN_VLM_MODEL`); `none` → **text thô** `_describe_image_raw` = caption + footnotes + ngữ cảnh, không gọi LLM. `auto`: có `CAPTION_LLM_API_KEY` → `gemini`, elif có `QWEN_VLM_MODEL` → `vision`, else → `none`. Legacy `"text"` tự chuyển `"none"` kèm warning (path OCR-ảnh đã xoá).
 
@@ -449,7 +449,7 @@ Field của mỗi document (`RetrievedDocV2`):
 - `doc`: document đã resolve qua Mongo (`resolver.resolve_doc_id`) — `{document_id, title, document_type, organization_unit_id, file_url, source_url}`; không resolve được → `null`.
 - `reference_id`: chunk id.
 - `artifact_url`: presigned URL (hết hạn sau `MINIO_PRESIGN_EXPIRES`) của `asset_key`; `null` khi chunk không có asset hoặc presign lỗi (tăng `presign_failures_total`).
-- `artifact_urls`: presigned của **mọi ảnh của doc** (`asset_store.presign_doc_images` — ảnh crawl section `Hình ảnh` + ảnh pdf/table, mục 2). Trả cho cả chunk text (kết quả chỉ-text vẫn kèm đường dẫn ảnh của doc); doc không resolve được qua Mongo hoặc store lỗi/missing method → `[]` (key giữ nguyên shape).
+- `artifact_urls`: chunk payload có sẵn URL gốc (doc crawl — `artifact_urls` từ parse stage, mục 2) thì trả thẳng; ngược lại presigned của **mọi ảnh của doc** (`asset_store.presign_doc_images` — ảnh pdf/table, mục 2). Trả cho cả chunk text (kết quả chỉ-text vẫn kèm đường dẫn ảnh của doc); doc không resolve được qua Mongo hoặc store lỗi/missing method → `[]` (key giữ nguyên shape).
 - `table_body`: markdown của bảng (modality `table`); `page`, `caption`: trang và caption của item.
 
 `references`: danh sách `doc` dedup theo `document_id`, chỉ có khi `include_references: true`. `meta`: `latency_ms`, `requested_top_k`, `returned`, `candidates` (số ứng viên tầng vector), `fusion` = `raw` | `rrf` | `empty` (cấu hình rerank fusion đã áp dụng).
@@ -501,7 +501,7 @@ CLI phục vụ 4 việc: xem trạng thái doc, chạy lại doc lỗi/hỏng, 
 ami-rag status [--failed] [--stale] [--doc <id|path>] [--check-embed-server]
 ami-rag retry (--doc <id|path> [...] | --all-failed) [--from-stage S] [--max-attempts N] [--yes] [--embed-server-url URL] [--embed-batch-size N]
 ami-rag reindex [--stale | --all | --scan | --doc <id|path> [...]] [--from-stage S] [--dry-run] [--yes] [--limit N] [--sleep S] [--batch B] [--batch-sleep S] [--embed-server-url URL] [--embed-batch-size N]
-ami-rag cleanup [--dry-run] [--yes] [--stale-models] [--purge-cache-model MODEL...] [--mongo-only | --qdrant-only]
+ami-rag cleanup [--dry-run] [--yes] [--stale-models] [--purge-cache-model MODEL...] [--crawl-assets] [--mongo-only | --qdrant-only]
 ```
 
 ### `status` — xem trạng thái (mặc định chỉ đọc local: 0 LLM, 0 embed, 0 model call)
@@ -559,7 +559,7 @@ In workspace, config đang dùng (`embed_model`/`embed_dim`/`chunker_version`), 
   - **Ngắt quãng / resume / lặp vô hạn**: doc xong embed được đánh dấu `indexed` kèm `embed_model` mới trong registry → effective không còn `stale`; doc chưa xong giữ `embed_model` cũ ⇒ vẫn `stale` và được lệnh `--stale` (mặc định) chọn lại. Đường dẫn resume = chạy lại cùng lệnh đến khi `ami-rag status` không còn doc `stale`; ngắt giữa chừng an toàn (stage embed luôn `delete_by_doc` trước khi upsert). Doc lỗi nằm ở `failed` kèm `error_stage`, xử lý `retry --from-stage embed`.
   - `--limit`/`--sleep`/`--batch`/`--batch-sleep` để chia lượt chậm, đè nhẹ embed/rerank server khi chạy cả nghìn doc; `--dry-run` vẫn tính đúng scope sau `--limit`.
   - Index mới OK (so sánh retrieve + live test `tests/test_retrieval_recall_live.py`) mới dọn: `ami-rag cleanup --stale-models --purge-cache-model "nvidia/llama-nemotron-embed-vl-1b-v2" --yes`.
-- Các tình huống khác (lịch sử, cùng cơ chế): sinh lại caption ảnh `--from-stage describe` (1 call Gemini/ảnh, mục 5.3); doc crawl cũ chưa có ảnh `--from-stage parse` (mục 2); nâng `CHUNKER_VERSION` `--from-stage chunk` (mục 5.5).
+- Các tình huống khác (lịch sử, cùng cơ chế): sinh lại caption ảnh `--from-stage describe` (1 call Gemini/ảnh, mục 5.3); doc crawl cũ (index khi còn tải ảnh) chuyển sang `artifact_urls` `--from-stage parse` (mục 2); nâng `CHUNKER_VERSION` `--from-stage chunk` (mục 5.5).
 
 Mã thoát: `0` xong, `1` một số doc thất bại, `2` dừng sớm (preflight embed server, lockfile, validation).
 
@@ -578,6 +578,7 @@ Sau migration, các collection của LightRAG không còn được đọc/ghi nh
 | `--mongo-only` / `--qdrant-only` | giới hạn dò/xoá một loại DB |
 | `--stale-models` | xoá thêm collection Qdrant của embed model cũ: mọi `{WORKSPACE}__*` không phải `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` hiện tại |
 | `--purge-cache-model MODEL...` | xoá cache embedding SQLite của model (key bắt đầu `{MODEL}|`) — ví dụ `--purge-cache-model "Qwen/Qwen3-VL-Embedding-2B"` |
+| `--crawl-assets` | xoá ảnh crawl + `descriptions.json` của doc crawl (nguồn `mongo_text`) khỏi MinIO — nhánh riêng, chạy ngay và kết thúc; cần `--yes`, không có `--yes` chỉ dry-run in số object |
 
 Mã thoát: `0` xong (hoặc không có gì xoá), `1` một số collection xoá lỗi, `2` không kết nối được Mongo/Qdrant.
 
@@ -591,7 +592,7 @@ ami-rag cleanup --qdrant-only   # chỉ xoá collection Qdrant legacy
 ami-rag cleanup --stale-models --purge-cache-model "Qwen/Qwen3-VL-Embedding-2B" --yes
 ```
 
-Lưu ý: MinIO `rag-assets/` không thuộc cleanup — assets/content_list.json vẫn dùng cho resume. Cache embedding key theo model nên tự vô hiệu khi đổi model, nhưng vẫn chiếm chỗ trên đĩa — dùng `--purge-cache-model` để xoá hẳn. Thư mục local `rag_storage/` của LightRAG cũ (nếu còn trên đĩa) xoá tay.
+Lưu ý: MinIO `rag-assets/` không thuộc cleanup legacy — assets/content_list.json vẫn dùng cho resume; riêng ảnh crawl + captions dọn bằng `--crawl-assets`. Cache embedding key theo model nên tự vô hiệu khi đổi model, nhưng vẫn chiếm chỗ trên đĩa — dùng `--purge-cache-model` để xoá hẳn. Thư mục local `rag_storage/` của LightRAG cũ (nếu còn trên đĩa) xoá tay.
 
 ### 7.1 Chạy CLI khi dùng Docker
 
@@ -718,7 +719,7 @@ Metric worker (`:9109/metrics` của `ami-rag-worker`; khi `WORKER_ENABLED=true`
 | `multimodal_rag_ingest_duration_seconds` | Histogram | `source` = `minio_parse` / `mongo_text` / `none` | Thời gian 1 event ingest |
 | `multimodal_rag_ingest_stage_duration_seconds` | Histogram | `stage` | Stage `delete` của worker; timing parse/describe/chunk/embed nằm trong DocStatusStore, không lên Prometheus |
 | `multimodal_rag_ingest_parse_failures_total` | Counter | `document_type` | Parse lỗi (tăng trong `VectorPipeline.run` khi stage parse lỗi) |
-| `multimodal_rag_ingest_crawl_image_failures_total` | Counter | `reason` = `http` / `redirect` / `connect` / `ssl` / `minio` / `other` | Tải ảnh section "Hình ảnh" lỗi (tăng trong `CrawlImageWorker.ensure_in_minio`) |
+| `multimodal_rag_ingest_crawl_image_failures_total` | Counter | `reason` = `http` / `redirect` / `connect` / `ssl` / `minio` / `other` | (không còn tăng — tải ảnh crawl đã bỏ, giữ cho dashboard cũ) |
 | `multimodal_rag_ingest_items_total` | Counter | `modality` | Content-list item đã ingest theo modality |
 | `multimodal_rag_ingest_pages_total` | Counter | | Số trang đã ingest |
 | `multimodal_rag_ingest_stream_pending` / `_stream_lag` | Gauge | | Message chưa ack / chưa giao cho consumer group |
@@ -740,7 +741,7 @@ Metric worker (`:9109/metrics` của `ami-rag-worker`; khi `WORKER_ENABLED=true`
 | `RagIngestBacklogHigh` | `sum(multimodal_rag_ingest_stream_pending) + sum(multimodal_rag_ingest_stream_lag) > 50` (for 15m) | warning | Hàng đợi `rag:ingest` tồn đọng; kiểm tra worker (GPU/MinerU) và `GET /admin/pipeline_status` |
 | `RagIngestFailures` | `sum(increase(multimodal_rag_ingest_events_total{result="failed"}[30m])) > 5` | warning | Ingest lỗi liên tục; xem `/admin/pipeline_status` và log `ami-rag-worker` |
 | `RagIngestParseFailures` | `sum(increase(multimodal_rag_ingest_parse_failures_total[30m])) > 3` | warning | MinerU parse lỗi (file hỏng, thiếu GPU/model, LibreOffice) |
-| `RagCrawlImageFailures` | `sum(increase(multimodal_rag_ingest_crawl_image_failures_total[30m])) > 20` | warning | Ảnh crawl mất khỏi index; kiểm tra log worker và SSL allowlist PTIT |
+| `RagCrawlImageFailures` | `sum(increase(multimodal_rag_ingest_crawl_image_failures_total[30m])) > 20` | warning | (metric không còn tăng — alert cũ, vô hại; xoá khi dọn dashboard) |
 | `RagIngestWorkerDown` | `absent(up{job=~".*multimodal-rag-retrieval.*", endpoint="worker-metrics"} == 1)` (for 5m) | critical | Target `worker-metrics` (:9109) không scrape được — worker chết hoặc Service/Endpoints sai |
 | `RagIngestEmbedFailures` | `sum(rate(multimodal_rag_ingest_embed_failures_total[5m])) > 0` | warning | Embed lỗi khi ingest; kiểm tra embedding-server :8008 (`BGE_API_KEY`, GPU) và log worker |
 

@@ -42,7 +42,20 @@ This project is indexed by GitNexus as **ami-multimodal-retrieval** (5488 symbol
 
 <!-- gitnexus:end -->
 
-# Task hiện hành — BGE-M3 migration: hybrid Qdrant + `artifact_urls` + reindex ngắt quãng
+# Task hiện hành — Bỏ tải ảnh crawl: trả URL gốc qua `artifact_urls` (26/10/2026)
+
+Trạng thái: **HOÀN TẤT** (branch `main`). Doc crawl (`mongo_text`) KHÔNG còn tải ảnh section 'Hình ảnh' về MinIO — parse tách URL gốc vào `artifact_urls` của text item, API trả thẳng (fallback presign chỉ cho doc không có `artifact_urls` trong payload, vd doc crawl index trước đây).
+
+## Nội dung
+1. `_crawl_text_content_list`: 1 text item kèm `artifact_urls` (strip rỗng → giữ text gốc); xoá `CrawlImageWorker`/semaphore/`image_worker` plumbing.
+2. `_build_chunks`: `artifact_urls` từ item text → `Chunk.extra` → payload Qdrant.
+3. API `_build_documents`: chunk payload có `artifact_urls` → trả thẳng, không presign doc đó; else `presign_doc_images` như cũ.
+4. CLI `ami-rag cleanup --crawl-assets --yes`: xoá toàn bộ ảnh dưới `{ASSET_PREFIX}/{doc_id}/` + `descriptions.json` của doc crawl (marker `source` trong DocStatusStore; thiếu → tra Mongo `original_file_name`); không `--yes` → dry-run. `make clean` gọi best-effort.
+5. Doc crawl index trước khi đổi → `ami-rag reindex --stale --from-stage parse` từng bài; ảnh MinIO cũ dọn `cleanup --crawl-assets --yes`.
+
+---
+
+# Task trước — BGE-M3 migration: hybrid Qdrant + `artifact_urls` + reindex ngắt quãng
 
 Trạng thái: **code xong, chưa reindex** (branch `feature/backend-data-parser`, baseline `6a7366a`). Index Nemotron cũ (dim 2048, collection 1-vector vô danh) không dùng được với config mới — phải reindex sau khi deploy.
 
@@ -93,7 +106,7 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`.
 ## Kiến trúc
 - Pipeline vector thuần, **không LightRAG** (không entity/graph/neo4j; chỉ còn param compat `lightrag=None` trong `modalprocessors`/`factory`). Stages: `parse → describe → chunk → embed → indexed`, artifacts trung gian (`content_list.json`/`descriptions.json`/`chunks.json`) lưu MinIO nên retry chạy tiếp từ stage lỗi.
 - **describe là stage DUY NHẤT có thể gọi LLM** (tuỳ chọn). Máy A không cần GPU, không cài torch/transformers.
-- Parse: MinerU (ảnh + layout) + `PARSE_TEXT_SOURCE=backend_data` (pdfplumber/fitz local dựng bố cục text/bảng, nội dung chữ/bảng từ OCR service chính, fallback Vinter máy B :8090 khi lỗi/treo/rỗng). Doc crawl (`mongo_text`): ảnh section `Hình ảnh` **luôn tải** về MinIO (`split_image_section`, item `image` kèm `asset_key`, lỗi bỏ qua) — không có env tắt.
+- Parse: MinerU (ảnh + layout) + `PARSE_TEXT_SOURCE=backend_data` (pdfplumber/fitz local dựng bố cục text/bảng, nội dung chữ/bảng từ OCR service chính, fallback Vinter máy B :8090 khi lỗi/treo/rỗng). Doc crawl (`mongo_text`): section `Hình ảnh` chỉ tách URL gốc vào `artifact_urls` của text item — KHÔNG tải ảnh về MinIO (cũ: tải, item `image`).
 - API v2-only: `POST /rag` + `/rag/stream` (`RAGRequest` = messages/top_k/include_references); query chỉ text. CLI `ami-rag` chỉ còn status/retry/reindex/cleanup.
 - Collection Qdrant: `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` (`collection_name()` trong `ami_rag/core/embedder.py`). Đổi `EMBED_MODEL`/`CHUNKER_VERSION` → collection mới → `ami-rag reindex --scan`.
 
@@ -123,7 +136,7 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`.
 ## Bẫy đã biết (bắt buộc nhớ)
 - **`tests/__init__.py` phải tồn tại**: site-packages có package `tests` shadow local dir → `tests.ami_service` import lỗi nếu thiếu.
 - GitNexus CLI phải dùng bản global 1.6.5 (`C:\Users\phanb\AppData\Local\pnpm\bin\gitnexus.CMD`), KHÔNG `npx` latest (DB mismatch v42 vs v40). Nếu GitNexus tool warns index STALE (thường sau khi đổi schema symbol) → chạy `gitnexus.CMD analyze` trước khi `gitnexus_impact`; nếu symbol vẫn không ra thì dùng `rg` thủ công và ghi rõ trong commit message.
-- MinIO `PoolManager(maxsize=16)` ở cả 3 nơi tạo client (`storage/assets.py`, `api/resolver.py`, `workers/crawl_images.py`) — describe fetch nhiều ảnh song song; đừng hạ về 1.
+- MinIO `PoolManager(maxsize=16)` ở 2 nơi tạo client còn lại (`storage/assets.py`, `api/resolver.py`) — describe fetch nhiều ảnh song song; đừng hạ về 1.
 - httpx gọi OCR: `connect` timeout tách riêng `min(10s, timeout)` để fail-fast; message lỗi phải phân biệt `ReadTimeout` (service treo) / `ConnectError` (unreachable-firewall) / `ConnectTimeout` (SYN drop).
 
 # Quy tắc làm việc (bắt buộc)
