@@ -199,7 +199,7 @@ def _format_modal_chunk(type_: str, item: dict, description: str) -> str:
         footnotes = _join_caption(
             item.get("image_footnote") or item.get("img_footnote")
         )
-        parts = [f"[Image Content]\n{description}"]
+        parts = [f"[Hình ảnh]\n{description}"]
         # Không ghi "Tóm tắt: Không có" - ảnh crawl không có caption nên dòng này
         # chỉ là nhiễu cho mọi chunk ảnh.
         if captions:
@@ -213,7 +213,7 @@ def _format_modal_chunk(type_: str, item: dict, description: str) -> str:
         # (kèm bbox/path tạm) vào chunk. Chunk không có body thì bị bỏ ở
         # `_build_chunks` (xem `_modal_text`).
         body = _join_caption(item.get("table_body") or item.get("text") or "")
-        parts = ["[Table Content]", f"Caption: {caption or 'Không có'}"]
+        parts = ["[Bảng]", f"Chú thích: {caption or 'Không có'}"]
         # Mô tả rỗng (LLM không với được) thì bỏ hẳn dòng, không để "Mô tả:" trơ trọng.
         if description.strip():
             parts.append(f"Mô tả: {description}")
@@ -221,15 +221,40 @@ def _format_modal_chunk(type_: str, item: dict, description: str) -> str:
         return "\n".join(parts).strip()
     if type_ == "equation":
         text = _join_caption(item.get("text") or item.get("latex") or "")
-        head = "[Equation]"
+        head = "[Công thức]"
         if description.strip():
             head += f"\nMô tả: {description}"
         return f"{head}\nCông thức: {text}".strip()
     if type_ == "audio":
-        return f"[Audio Content]\n{description}"
+        return f"[Âm thanh]\n{description}"
     if type_ == "video":
-        return f"[Video Content]\n{description}"
+        return f"[Video]\n{description}"
     return f"[{_normalize_item_type(type_).title()}]\n{description}"
+
+
+# Marker đầu chunk tiếng Anh cũ -> tiếng Việt. Query tiếng Việt ("cho tôi ảnh/
+# bảng của...") khớp trực tiếp marker, không phụ thuộc cross-lingual embedding.
+# Dùng chung bởi `_format_modal_chunk` (chunk mới) và
+# `scripts/migrate_chunk_markers.py` (chunk đã index).
+_CHUNK_MARKERS_VI: dict[str, str] = {
+    "[Image Content]": "[Hình ảnh]",
+    "[Table Content]": "[Bảng]",
+    "[Equation]": "[Công thức]",
+    "[Audio Content]": "[Âm thanh]",
+    "[Video Content]": "[Video]",
+}
+
+
+def migrate_chunk_markers(content: str) -> str:
+    """Đổi marker/nhãn tiếng Anh cũ trong chunk text sang tiếng Việt.
+
+    Áp dụng cho chunks.json đã lưu (caption không đổi — không gọi lại API
+    describe); chunk_id giữ nguyên. `Caption:` (nhãn chunk bảng cũ) chỉ đổi ở
+    đầu dòng để không đụng nội dung thật.
+    """
+    for old, new in _CHUNK_MARKERS_VI.items():
+        content = content.replace(old, new)
+    return re.sub(r"(?m)^Caption: ", "Chú thích: ", content)
 
 
 # Chunk ngắn hơn ngưỡng này bị gộp vào chunk kề. Doc crawl viết mỗi trường một
