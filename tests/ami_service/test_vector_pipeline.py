@@ -649,7 +649,7 @@ def test_build_chunks_prefix_title_on_image_chunk(pipeline):
         "doc_test", content_list, descriptions=[], doc_title="Sơ đồ khuôn viên Hà Đông"
     )
     assert chunks[0].modality == "image"
-    assert chunks[0].content.startswith("Sơ đồ khuôn viên Hà Đông\n[Image Content]")
+    assert chunks[0].content.startswith("Sơ đồ khuôn viên Hà Đông\n[Hình ảnh]")
 
 
 async def test_stage_parse_backend_data_rebuild(
@@ -773,7 +773,7 @@ async def test_prepare_embed_items_caption_only_keeps_modal_content(
         ),
         Chunk(
             id="c2",
-            content="[Table Content]",
+            content="[Bảng]",
             modality="table",
             page_idx=1,
             is_multimodal=True,
@@ -781,7 +781,7 @@ async def test_prepare_embed_items_caption_only_keeps_modal_content(
         ),
         Chunk(
             id="c3",
-            content="[Equation]",
+            content="[Công thức]",
             modality="equation",
             page_idx=2,
             is_multimodal=True,
@@ -797,7 +797,7 @@ async def test_prepare_embed_items_caption_only_keeps_modal_content(
     ]
     items = await pipeline._prepare_embed_items(chunks)
     # mọi chunk đều là str caption, đúng thứ tự
-    assert items == ["text", "[Table Content]", "[Equation]", "table no asset"]
+    assert items == ["text", "[Bảng]", "[Công thức]", "table no asset"]
 
 
 async def test_stage_embed_upserts_sparse(
@@ -1101,7 +1101,7 @@ def test_format_image_chunk_drops_empty_summary_line(pipeline):
 
     item = {"type": "image", "image_caption": [], "image_footnote": []}
     assert _format_modal_chunk("image", item, "Mô tả sơ đồ") == (
-        "[Image Content]\nMô tả sơ đồ"
+        "[Hình ảnh]\nMô tả sơ đồ"
     )
     item2 = {
         "type": "image",
@@ -1109,7 +1109,7 @@ def test_format_image_chunk_drops_empty_summary_line(pipeline):
         "image_footnote": ["Ghi chú"],
     }
     assert _format_modal_chunk("image", item2, "Mô tả") == (
-        "[Image Content]\nMô tả\nTóm tắt: Sơ đồ tổ chức\nGhi chú"
+        "[Hình ảnh]\nMô tả\nTóm tắt: Sơ đồ tổ chức\nGhi chú"
     )
 
 
@@ -1121,8 +1121,39 @@ def test_format_table_chunk_without_description_has_no_empty_line():
     out = _format_modal_chunk("table", item, "")
     assert "Mô tả:" not in out
     assert (
-        out == "[Table Content]\nCaption: Không có\n<table><tr><td>TT</td></tr></table>"
+        out == "[Bảng]\nChú thích: Không có\n<table><tr><td>TT</td></tr></table>"
     )
+
+
+def test_migrate_chunk_markers():
+    """Chunk cũ tiếng Anh -> tiếng Việt; nhãn Caption chỉ đổi ở đầu dòng."""
+    from ami_rag.core.vector_pipeline import migrate_chunk_markers
+
+    old = (
+        "[Image Content]\nmô tả\nTóm tắt: sơ đồ\n[Image Content] trong nội dung"
+    )
+    assert migrate_chunk_markers(old) == (
+        "[Hình ảnh]\nmô tả\nTóm tắt: sơ đồ\n[Hình ảnh] trong nội dung"
+    )
+    table = "[Table Content]\nCaption: Học phí\nCaption: trong body\n<table/>"
+    assert migrate_chunk_markers(table) == (
+        "[Bảng]\nChú thích: Học phí\nChú thích: trong body\n<table/>"
+    )
+    assert migrate_chunk_markers("[Equation]\nCông thức: E=mc^2") == (
+        "[Công thức]\nCông thức: E=mc^2"
+    )
+    # Chunk thuần tiếng Việt / không marker -> không đổi
+    assert migrate_chunk_markers("Văn bản thường\nCaption: giữ") == (
+        "Văn bản thường\nChú thích: giữ"
+    )
+
+
+def test_migrate_chunk_markers_noop_for_new_chunks():
+    """Chunk sinh bằng marker mới chạy qua migrate không đổi (idempotent)."""
+    from ami_rag.core.vector_pipeline import migrate_chunk_markers
+
+    fresh = "[Hình ảnh]\nmô tả\n[Bảng]\nChú thích: x\n[Công thức]\n[Âm thanh]\n[Video]"
+    assert migrate_chunk_markers(fresh) == fresh
 
 
 def test_build_chunks_drops_dict_repr_description(pipeline):
@@ -1403,3 +1434,4 @@ async def test_describe_vision_mode_uses_processor(
     img_item = img_calls[0][1]
     assert img_item["img_path"] != "gone.png", "materialize phải gán img_path temp"
     assert not Path(img_item["img_path"]).exists(), "temp dir xoá sau stage"
+

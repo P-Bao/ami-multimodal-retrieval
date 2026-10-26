@@ -50,7 +50,7 @@ def app(
             },
             "chunk-3": {
                 "doc_id": "64b000000000000000000001",
-                "content": "[Image Content]\nmô tả image",
+                "content": "[Hình ảnh]\nmô tả image",
                 "modality": "image",
                 "source_path": "64b000000000000000000001_a.pdf",
                 "chunk_id": "chunk-3",
@@ -60,7 +60,7 @@ def app(
             },
             "chunk-4": {
                 "doc_id": "64b000000000000000000001",
-                "content": "[Table Content]\nCaption: Học phí",
+                "content": "[Bảng]\nChú thích: Học phí",
                 "modality": "table",
                 "source_path": "64b000000000000000000001_a.pdf",
                 "chunk_id": "chunk-4",
@@ -223,14 +223,14 @@ _FUSION_POINTS = {
     },
     "chunk-f3": {
         "doc_id": "64b000000000000000000001",
-        "content": "[Image Content]\nmô tả image",
+        "content": "[Hình ảnh]\nmô tả image",
         "modality": "image",
         "chunk_id": "chunk-f3",
         "asset_key": "rag-assets/64b000000000000000000001/img1.png",
     },
     "chunk-f4": {
         "doc_id": "64b000000000000000000001",
-        "content": "[Table Content]\nCaption: bảng",
+        "content": "[Bảng]\nChú thích: bảng",
         "modality": "table",
         "chunk_id": "chunk-f4",
     },
@@ -242,7 +242,7 @@ _FUSION_POINTS = {
     },
     "chunk-f6": {
         "doc_id": "64b000000000000000000001",
-        "content": "[Image Content]\nmô tả image 2",
+        "content": "[Hình ảnh]\nmô tả image 2",
         "modality": "image",
         "chunk_id": "chunk-f6",
         "asset_key": "rag-assets/64b000000000000000000001/img2.png",
