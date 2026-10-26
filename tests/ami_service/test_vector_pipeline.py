@@ -795,9 +795,10 @@ async def test_prepare_embed_items_caption_only_keeps_modal_content(
             is_multimodal=True,
         ),
     ]
-    items = await pipeline._prepare_embed_items(chunks)
-    # mọi chunk đều là str caption, đúng thứ tự
+    items, spans = await pipeline._prepare_embed_items(chunks)
+    # legacy 1:1: 1 text item/chunk
     assert items == ["text", "[Bảng]", "[Công thức]", "table no asset"]
+    assert spans == [(0, 1), (1, 2), (2, 3), (3, 4)]
 
 
 async def test_stage_embed_upserts_sparse(
@@ -1497,15 +1498,18 @@ async def test_prepare_embed_items_attaches_image_b64_for_vintern(
             asset_key="rag-assets/d/t1.png",
         ),
     ]
-    items = await pipeline._prepare_embed_items(chunks)
+    items, spans = await pipeline._prepare_embed_items(chunks)
     assert items[0] == {"type": "document", "text": "text"}
-    # ảnh: image-only — không có key "text"
+    # ảnh: 2 item — image-only (server 422 nếu 1 item kèm text) + caption text
+    # riêng (vector chunk = nối token vectors ảnh + caption)
     assert items[1] == {
         "type": "document",
         "image_b64": base64.b64encode(b"\x89PNG-fake-bytes").decode("ascii"),
     }
+    assert items[2] == {"type": "document", "text": "caption ảnh"}
     # table: text item dù có asset_key (ảnh table không embed bytes)
-    assert items[2] == {"type": "document", "text": "[Bảng]"}
+    assert items[3] == {"type": "document", "text": "[Bảng]"}
+    assert spans == [(0, 1), (1, 3), (3, 4)]
 
 
 async def test_prepare_embed_items_image_missing_bytes_falls_back_caption(
@@ -1529,8 +1533,52 @@ async def test_prepare_embed_items_image_missing_bytes_falls_back_caption(
             asset_key="rag-assets/d/missing.png",
         ),
     ]
-    items = await pipeline._prepare_embed_items(chunks)
+    items, spans = await pipeline._prepare_embed_items(chunks)
     assert items == [{"type": "document", "text": "caption dự phòng"}]
+    assert spans == [(0, 1)]
+
+
+async def test_stage_embed_concat_image_and_caption(
+    fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+):
+    """Chunk ảnh có bytes + caption -> vector = nối token vectors 2 item
+    (ảnh trước, caption sau); record vẫn 1 point/chunk; sparse None."""
+    from ami_rag.core.vector_pipeline import Chunk
+
+    pipeline, embedder = _vintern_pipeline(
+        fake_vector_store, fake_asset_store, fake_status_store, fake_docs_repo
+    )
+
+    async def _embed_by_kind(items):
+        # ảnh -> token 0.1, caption -> token 0.9 để phân biệt thứ tự concat
+        return [
+            [[0.1] * 128] if isinstance(it, dict) and it.get("image_b64") else [[0.9] * 128]
+            for it in items
+        ]
+
+    embedder.embed_documents = _embed_by_kind
+    seen: list = []
+    original_upsert = fake_vector_store.upsert
+
+    async def _spy(collection, records):
+        seen.extend(records)
+        return await original_upsert(collection, records)
+
+    fake_vector_store.upsert = _spy
+    chunks = [
+        Chunk(
+            id="c-img",
+            content="mô tả ảnh",
+            modality="image",
+            page_idx=0,
+            is_multimodal=True,
+            asset_key="rag-assets/d/img1.png",
+        ),
+    ]
+    await pipeline._stage_embed("docX", chunks)
+    assert len(seen) == 1
+    assert seen[0].vector == [[0.1] * 128, [0.9] * 128]
+    assert seen[0].sparse is None
 
 
 async def test_full_run_vintern_multivector_dense_only(

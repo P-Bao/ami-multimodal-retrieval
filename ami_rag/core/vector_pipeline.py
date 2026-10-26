@@ -1107,21 +1107,29 @@ class VectorPipeline(PipelineRunner):
         )
 
     # ------------------------------------------------------------------
-    async def _prepare_embed_items(self, chunks: list[Chunk]) -> list[str | dict]:
-        """Item embed theo khả năng embedder.
+    async def _prepare_embed_items(
+        self, chunks: list[Chunk]
+    ) -> tuple[list[str | dict], list[tuple[int, int]]]:
+        """Item embed theo khả năng embedder + span (start, end) của từng chunk.
 
         - ``supports_images`` (Vintern multi-vector): chunk ảnh có asset_key
-          được gắn ``image_b64`` (fetch MinIO; lỗi/thiếu bytes -> fallback text
-          caption). Item ảnh gửi **image-only** (server 422 nếu kèm text).
-          Chunk text/table giữ text item (table KHÔNG gửi table_body kèm ảnh).
+          và fetch được bytes -> **2 item**: image-only (server 422 nếu 1 item
+          kèm cả text) + text (chunk content = marker + mô tả + caption).
+          Vector chunk = nối token vectors ảnh + text: MaxSim match thêm token
+          text ngoài visual tokens; sửa caption chỉ miss cache item text.
+          Thiếu bytes -> 1 item text fallback (như cũ).
         - không supports_images (legacy single-vector text-only): caption-only
-          ``list[str]`` như cũ - ảnh đi qua caption describe stage.
+          1 item/chunk - ảnh đi qua caption describe stage.
         """
         if not getattr(self.embedder, "supports_images", False):
-            return [c.content for c in chunks]
+            return [c.content for c in chunks], [
+                (i, i + 1) for i in range(len(chunks))
+            ]
 
         items: list[str | dict] = []
+        spans: list[tuple[int, int]] = []
         for c in chunks:
+            start = len(items)
             if c.modality == "image" and c.asset_key and hasattr(
                 self.asset_store, "get_bytes"
             ):
@@ -1137,13 +1145,17 @@ class VectorPipeline(PipelineRunner):
                             "image_b64": base64.b64encode(data).decode("ascii"),
                         }
                     )
+                    if c.content.strip():
+                        items.append({"type": "document", "text": c.content})
+                    spans.append((start, len(items)))
                     continue
                 logger.warning(
                     "chunk ảnh %s thiếu bytes -> embed fallback caption text",
                     c.asset_key,
                 )
             items.append({"type": "document", "text": c.content})
-        return items
+            spans.append((start, len(items)))
+        return items, spans
 
     # ------------------------------------------------------------------
     # Stage: embed (máy B qua RemoteEmbedder) + verify (idempotent)
@@ -1160,7 +1172,7 @@ class VectorPipeline(PipelineRunner):
             seen_ids.add(c.id)
         # idempotency: xoá vector cũ của doc trước khi upsert
         await self.vector_store.delete_by_doc(self.collection, doc_id)
-        items = await self._prepare_embed_items(chunks)
+        items, spans = await self._prepare_embed_items(chunks)
         INGEST_EMBED_ITEMS_TOTAL.inc(len(items))
         # shortcut: count_cache_hits đọc cache trước khi embed; embedder sparse
         # (legacy) gọi embed_documents_sparse use_cache=False nên hits ~0 -
@@ -1173,22 +1185,26 @@ class VectorPipeline(PipelineRunner):
                 )  # không cache
             else:  # legacy embedder không có sparse
                 dense = await self.embedder.embed_documents(items)
-                sparse = [None] * len(items)
+                sparse = [None] * len(dense)
         except Exception as exc:
             INGEST_EMBED_FAILURES_TOTAL.labels(reason=embed_failure_reason(exc)).inc()
             raise
-        if len(dense) != len(chunks):
-            raise RuntimeError("embed server trả số vector không khớp số chunk")
-        records = [
-            ChunkRecord(
-                id=c.id,
-                vector=dense[i],
-                # sparse rỗng ({}) cũng như None: không ghi sparse point
-                sparse=sparse[i] if sparse[i] else None,
-                payload=c.payload(doc_id, source_path=source_path),
+        if len(dense) != len(items):
+            raise RuntimeError("embed server trả số vector không khớp số item")
+        records = []
+        for c, (start, end) in zip(chunks, spans):
+            vecs = dense[start:end]
+            records.append(
+                ChunkRecord(
+                    id=c.id,
+                    # chunk ảnh (2 item ảnh + caption): nối token vectors —
+                    # MaxSim match thêm token text ngoài visual tokens
+                    vector=vecs[0] if len(vecs) == 1 else [t for v in vecs for t in v],
+                    # sparse rỗng ({}) cũng như None: không ghi sparse point
+                    sparse=(sparse[start] or None) if end - start == 1 else None,
+                    payload=c.payload(doc_id, source_path=source_path),
+                )
             )
-            for i, c in enumerate(chunks)
-        ]
         await self.vector_store.upsert(self.collection, records)
         actual = await self.vector_store.count(self.collection, doc_id)
         if actual < len(chunks):
@@ -1380,7 +1396,7 @@ class VectorPipeline(PipelineRunner):
                 doc_id,
             )
             chunks = []
-        items = await self._prepare_embed_items(chunks)
+        items, _spans = await self._prepare_embed_items(chunks)
         return StageOutcome(
             doc_id=doc_id,
             stage=from_stage or "chunk",
