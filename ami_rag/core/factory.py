@@ -250,14 +250,11 @@ def build_pipeline(
     modal_processors=None,
     llm_func=None,
     caption_func=None,
-    image_worker=None,
 ):
     """Build VectorPipeline wired to AMI infrastructure (test paths can inject deps).
 
     ``caption_func`` (tuỳ chọn): inject caption func giả cho test; khi bỏ trống,
     image processor dùng Gemini (CAPTION_LLM_*) hoặc vision func như cũ.
-    ``image_worker`` (tuỳ chọn): inject CrawlImageWorker giả cho test; bỏ trống
-    thì pipeline lazy-build từ settings.
     """
     from ami_rag.core.vector_pipeline import VectorPipeline
     from ami_rag.core.vector_store import QdrantVectorStore
@@ -292,7 +289,6 @@ def build_pipeline(
         modal_processors=modal_processors
         or _build_modal_processors(settings, caption_func=caption_func),
         llm_func=llm_func or _build_llm_func(settings),
-        image_worker=image_worker,
     )
 
 

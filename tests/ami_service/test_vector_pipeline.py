@@ -16,7 +16,6 @@ from ami_rag.storage.doc_status import STATUS_INDEXED
 from raganything.backend_data_extract import BackendDataParseError
 from tests.ami_service.conftest import (
     FakeEmbedder,
-    FakeImageWorker,
     FakeParser,
     FakeVectorStore,
 )
@@ -412,107 +411,73 @@ async def test_mark_indexed_writes_document_oid_for_lookup(pipeline, fake_status
     assert row["document_oid"] == ObjectId(PDF_ID)
 
 
-# --- Crawl: section 'Hình ảnh' -> tải ảnh về MinIO -> item image ---
+# --- Crawl: section 'Hình ảnh' -> 1 text item kèm artifact_urls (không tải ảnh) ---
 
 
-async def test_stage_parse_crawl_images_injected(
+async def test_stage_parse_crawl_artifact_urls_no_download(
     pipeline, fake_docs_repo, fake_status_store, fake_asset_store
 ):
     _add_crawl_doc(fake_docs_repo, fake_status_store)
-    worker = FakeImageWorker()
-    pipeline.image_worker = worker
 
     doc = fake_docs_repo.find_by_id(CRAWL_ID)
     intermediate = await pipeline._stage_parse(CRAWL_ID, doc)
     content_list = intermediate.content_list
 
-    assert worker.calls == [(CRAWL_ID, CRAWL_URLS[0]), (CRAWL_ID, CRAWL_URLS[1])]
-    # text đã strip section ảnh, không còn URL
-    assert content_list[0] == {
-        "type": "text",
-        "text": "Bài crawl PTIT.\n\nNội dung chính.",
-        "page_idx": 0,
-    }
-    images = [i for i in content_list if i["type"] == "image"]
-    assert len(images) == 2
-    assert [i["asset_key"] for i in images] == [
-        f"rag-assets/{CRAWL_ID}/img1.jpg",
-        f"rag-assets/{CRAWL_ID}/img2.jpg",
+    # 1 text item duy nhất: text đã strip section ảnh, URL gốc nằm trong artifact_urls
+    assert content_list == [
+        {
+            "type": "text",
+            "text": "Bài crawl PTIT.\n\nNội dung chính.",
+            "page_idx": 0,
+            "artifact_urls": CRAWL_URLS,
+        }
     ]
-    assert all(i["image_caption"] == [] and i["page_idx"] == 0 for i in images)
-    # doc crawl không fetch file gốc từ MinIO
+    # KHÔNG tải ảnh: không fetch file gốc, không upload asset nào lên MinIO
     assert fake_asset_store.fetched == []
+    assert ("upload_assets", CRAWL_ID) not in fake_asset_store.calls
 
 
-async def test_stage_parse_crawl_all_downloads_fail_keeps_text(
+async def test_stage_parse_crawl_empty_strip_keeps_original_text(
     pipeline, fake_docs_repo, fake_status_store
 ):
-    _add_crawl_doc(fake_docs_repo, fake_status_store)
-    pipeline.image_worker = FakeImageWorker(fail_urls=set(CRAWL_URLS))
+    # Bài chỉ có section 'Hình ảnh' -> strip rỗng -> giữ text gốc (URL trong
+    # text, không mất nội dung khỏi index) vẫn kèm artifact_urls.
+    fake_docs_repo.docs[CRAWL_ID] = {
+        "_id": CRAWL_ID,
+        "title": "Crawl ảnh only",
+        "content": "**Hình ảnh:**\n\n" f"- {CRAWL_URLS[0]}\n",
+        "document_type": "news",
+        "original_file_name": None,
+        "file_path": None,
+        "metadata": {},
+    }
 
     doc = fake_docs_repo.find_by_id(CRAWL_ID)
     intermediate = await pipeline._stage_parse(CRAWL_ID, doc)
 
-    # không tải được ảnh nào -> giữ nguyên text gốc (URL không mất khỏi index)
     assert intermediate.content_list == [
-        {"type": "text", "text": CRAWL_CONTENT, "page_idx": 0}
+        {
+            "type": "text",
+            "text": f"**Hình ảnh:**\n\n- {CRAWL_URLS[0]}\n",
+            "page_idx": 0,
+            "artifact_urls": [CRAWL_URLS[0]],
+        }
     ]
-
-
-async def test_stage_parse_crawl_partial_failure_skips_failed(
-    pipeline, fake_docs_repo, fake_status_store
-):
-    _add_crawl_doc(fake_docs_repo, fake_status_store)
-    pipeline.image_worker = FakeImageWorker(fail_urls={CRAWL_URLS[0]})
-
-    doc = fake_docs_repo.find_by_id(CRAWL_ID)
-    intermediate = await pipeline._stage_parse(CRAWL_ID, doc)
-    content_list = intermediate.content_list
-
-    assert [i["type"] for i in content_list] == ["text", "image"]
-    assert content_list[1]["asset_key"] == f"rag-assets/{CRAWL_ID}/img2.jpg"
 
 
 async def test_stage_parse_text_doc_without_section_single_text_item(
     pipeline, fake_docs_repo, fake_status_store
 ):
-    # doc mongo_text không có section 'Hình ảnh' -> 1 text item, không tải ảnh
-    worker = FakeImageWorker()
-    pipeline.image_worker = worker
-
+    # doc mongo_text không có section 'Hình ảnh' -> 1 text item, không artifact_urls
     doc = fake_docs_repo.find_by_id(TEXT_ID)
     intermediate = await pipeline._stage_parse(TEXT_ID, doc)
 
     assert intermediate.content_list == [
         {"type": "text", "text": "nội dung text E", "page_idx": 0}
     ]
-    assert worker.calls == []
 
 
-def test_get_image_worker_lazy_builds_from_settings(pipeline, monkeypatch):
-    import ami_rag.workers.crawl_images as crawl_images_mod
-
-    captured = {}
-
-    class _W:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr(crawl_images_mod, "CrawlImageWorker", _W)
-
-    worker = pipeline._get_image_worker()
-
-    # lazy-build với prefix = ASSET_PREFIX (asset nằm dưới doc prefix để
-    # delete_doc_assets dọn theo doc)
-    assert isinstance(worker, _W)
-    assert captured["prefix"] == "rag-assets"
-    assert captured["bucket"] == "ami-data-documents"
-    assert captured["endpoint"] == "localhost:9000"
-    # cached: lần sau trả lại chính worker đó
-    assert pipeline._get_image_worker() is worker
-
-
-async def test_full_run_crawl_doc_indexes_images(
+async def test_full_run_crawl_doc_indexes_artifact_urls(
     pipeline,
     fake_docs_repo,
     fake_status_store,
@@ -522,28 +487,25 @@ async def test_full_run_crawl_doc_indexes_images(
     fake_modal_processors,
 ):
     _add_crawl_doc(fake_docs_repo, fake_status_store)
-    pipeline.image_worker = FakeImageWorker()
 
     outcome = await pipeline.run(CRAWL_ID)
 
     assert outcome.ok and outcome.stage == "indexed"
     row = fake_status_store.get(CRAWL_ID)
     assert row["source"] == "mongo_text"
-    assert row["counts"] == {"text": 1, "image": 2}
+    assert row["counts"] == {"text": 1}
     payloads = [p for p in fake_vector_store.points.values() if p["doc_id"] == CRAWL_ID]
     assert len(payloads) == outcome.chunk_count
-    image_payloads = [p for p in payloads if p["modality"] == "image"]
-    assert len(image_payloads) == 2
-    assert all(p["asset_key"] for p in image_payloads)
-    # URL ảnh không lọt vào text chunk
+    # URL ảnh gốc đi theo payload chunk (qua Chunk.extra) — API trả thẳng
+    assert all(p.get("artifact_urls") == CRAWL_URLS for p in payloads)
+    # text chunk không còn URL ảnh trong content
     assert all("NL_04608" not in p["content"] for p in payloads)
     # embed caption-only (BGE-M3): không item dict image_b64 nữa
     last_batch = fake_embedder.embedded_texts[-1]
     assert all(isinstance(it, str) for it in last_batch)
-    # describe đã chạy cho ảnh crawl (descriptions.json có item image)
+    # không còn item modal -> describe lưu descriptions.json rỗng
     desc_key = ArtifactPaths.descriptions_key(fake_asset_store, CRAWL_ID)
-    descriptions = fake_asset_store.json_objects.get(desc_key)
-    assert {d["type"] for d in descriptions} == {"image"}
+    assert fake_asset_store.json_objects.get(desc_key) == []
 
 
 async def test_qdrant_vector_store_upsert_batching():

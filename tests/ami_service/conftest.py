@@ -243,20 +243,6 @@ class FakeParser:
         ]
 
 
-class FakeImageWorker:
-    """Stand-in cho CrawlImageWorker (tải ảnh crawl, không mạng)."""
-
-    def __init__(self, fail_urls=()):
-        self.calls = []
-        self.fail_urls = set(fail_urls)
-
-    async def ensure_in_minio(self, doc_id, url):
-        self.calls.append((doc_id, url))
-        if url in self.fail_urls:
-            return None
-        return f"rag-assets/{doc_id}/img{len(self.calls)}.jpg"
-
-
 class FakeQueue:
     def __init__(self):
         self.messages = []

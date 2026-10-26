@@ -397,7 +397,6 @@ class VectorPipeline(PipelineRunner):
         parser=None,
         modal_processors=None,
         llm_func=None,
-        image_worker=None,
     ):
         self.settings = settings
         self.embedder = embedder
@@ -410,13 +409,9 @@ class VectorPipeline(PipelineRunner):
         # LLM text-only (table/equation/generic processors); ảnh caption qua
         # Gemini (CAPTION_LLM_*) hoặc vision func ngay trong modal processors.
         self.llm_func = llm_func
-        # CrawlImageWorker: tải ảnh section 'Hình ảnh' của doc crawl về MinIO
-        self.image_worker = image_worker
         self._bd_extractor = None
         # Giới hạn song song cho caption ảnh (fetch MinIO + gọi caption func)
         self._caption_sem: asyncio.Semaphore | None = None
-        # Giới hạn song song tải ảnh crawl (băng thông + MinIO, độc lập caption)
-        self._crawl_dl_sem: asyncio.Semaphore | None = None
         self.collection = collection_name(
             settings.WORKSPACE, settings.EMBED_MODEL, settings.CHUNKER_VERSION
         )
@@ -529,97 +524,34 @@ class VectorPipeline(PipelineRunner):
         return self._bd_extractor
 
     # ------------------------------------------------------------------
-    # Crawl text: 1 text item + ảnh section 'Hình ảnh' (tuỳ chọn)
+    # Crawl text: 1 text item kèm URL ảnh gốc (artifact_urls)
     # ------------------------------------------------------------------
-    _CRAWL_DOWNLOAD_CONCURRENCY = 4
-
-    def _get_image_worker(self):
-        """CrawlImageWorker (luôn bật - không có env tắt).
-
-        Chưa inject thì lazy-build từ settings. Prefix = ASSET_PREFIX để
-        asset_key nằm dưới doc prefix: ``delete_doc_assets`` dọn theo doc.
-        """
-        if self.image_worker is None:
-            from ami_rag.workers.crawl_images import CrawlImageWorker
-
-            self.image_worker = CrawlImageWorker(
-                endpoint=self.settings.MINIO_ENDPOINT,
-                access_key=self.settings.MINIO_ACCESS_KEY,
-                secret_key=self.settings.MINIO_SECRET_KEY,
-                bucket=self.settings.MINIO_BUCKET,
-                prefix=self.settings.ASSET_PREFIX,
-                secure=self.settings.MINIO_SECURE,
-            )
-        return self.image_worker
-
-    def _get_crawl_dl_semaphore(self) -> asyncio.Semaphore:
-        if self._crawl_dl_sem is None:
-            self._crawl_dl_sem = asyncio.Semaphore(self._CRAWL_DOWNLOAD_CONCURRENCY)
-        return self._crawl_dl_sem
-
     async def _crawl_text_content_list(self, doc_id: str, text: str) -> list[dict]:
-        """Content_list doc mongo_text (text/crawl): 1 text item + ảnh crawl.
+        """Content_list doc mongo_text (text/crawl): 1 text item + ``artifact_urls``.
 
-        Tách section 'Hình ảnh' khỏi text (hàm ``split_image_section``),
-        tải các ảnh về MinIO (asset_key nằm dưới doc prefix) và append
-        item image — ảnh crawl đi tiếp qua describe/chunk/embed như ảnh
-        của doc/pdf.
+        Tách section 'Hình ảnh' khỏi text (hàm ``split_image_section``): URL
+        ảnh gốc được ghi vào ``artifact_urls`` của text item để API trả thẳng
+        cho client — KHÔNG tải ảnh về MinIO nữa (ảnh crawl không qua
+        describe/chunk/embed).
 
-        - Text mới là text đã strip section; strip rỗng thì bỏ text item.
-        - Không có section -> đúng hành vi cũ: 1 text item (không dựng
-          worker, không tải gì).
-        - Lỗi tải từng ảnh bỏ qua (không crash parse); không tải được ảnh
-          nào -> giữ nguyên text gốc (không mất URL khỏi index).
+        - Không có section -> đúng hành vi cũ: 1 text item (không artifact_urls).
+        - Strip rỗng (toàn bài chỉ có section ảnh) -> dùng text gốc (giữ URL
+          trong text, không mất nội dung khỏi index) vẫn kèm artifact_urls.
         """
         from ami_rag.workers.crawl_images import split_image_section
 
         urls, stripped = split_image_section(text)
         if not urls:
             return [{"type": "text", "text": text, "page_idx": 0}]
-        worker = self._get_image_worker()
-        sem = self._get_crawl_dl_semaphore()
-
-        async def _one(url: str) -> tuple[str, str | None]:
-            async with sem:
-                return url, await worker.ensure_in_minio(doc_id, url)
-
-        results = await asyncio.gather(*(_one(u) for u in urls))
-        ok = [(u, key) for u, key in results if key]
-        if not ok:
-            logger.warning(
-                "crawl doc=%s: không tải được ảnh nào (%d URL, giữ text gốc)",
-                doc_id,
-                len(urls),
-            )
-            return [{"type": "text", "text": text, "page_idx": 0}]
-        if len(ok) < len(urls):
-            logger.warning(
-                "crawl doc=%s: tải được %d/%d ảnh, %d URL lỗi bị bỏ qua",
-                doc_id,
-                len(ok),
-                len(urls),
-                len(urls) - len(ok),
-            )
-        content_list: list[dict] = []
-        if stripped.strip():
-            content_list.append({"type": "text", "text": stripped, "page_idx": 0})
-        content_list.extend(
+        body = stripped if stripped.strip() else text
+        return [
             {
-                "type": "image",
-                "asset_key": key,
-                "image_caption": [],
-                "image_footnote": [],
+                "type": "text",
+                "text": body,
                 "page_idx": 0,
+                "artifact_urls": urls,
             }
-            for _, key in ok
-        )
-        logger.info(
-            "crawl doc=%s: %d ảnh tải về MinIO (%d text item)",
-            doc_id,
-            len(ok),
-            len(content_list) - len(ok),
-        )
-        return content_list
+        ]
 
     async def _rebuild_backend_data(
         self, doc_id: str, content_list: list[dict], local: Path
@@ -985,6 +917,7 @@ class VectorPipeline(PipelineRunner):
         chunks: list[Chunk] = []
         chunk_idx = 0
         buf: list[str] = []
+        buf_urls: list[str] = []
         buf_page: Any = None
         buf_last_page: Any = None
 
@@ -992,12 +925,16 @@ class VectorPipeline(PipelineRunner):
             return 0 if value is None else value
 
         def _flush() -> None:
-            nonlocal chunk_idx, buf, buf_page, buf_last_page
+            nonlocal chunk_idx, buf, buf_urls, buf_page, buf_last_page
             if not buf:
                 return
             text = "\n".join(buf)
             page = _page(buf_page)
             extra: dict = {"title": title} if title else {}
+            # URL ảnh gốc của doc crawl (artifact_urls trong item text) đi theo
+            # payload Qdrant qua extra -> API trả thẳng, không presign lại.
+            if buf_urls:
+                extra["artifact_urls"] = list(buf_urls)
             if buf_last_page is not None and _page(buf_last_page) != page:
                 extra["page_end"] = _page(buf_last_page)
             for piece in chunk_text(
@@ -1018,7 +955,7 @@ class VectorPipeline(PipelineRunner):
                     )
                 )
                 chunk_idx += 1
-            buf, buf_page, buf_last_page = [], None, None
+            buf, buf_urls, buf_page, buf_last_page = [], [], None, None
 
         for i, item in enumerate(content_list):
             t = item.get("type") or "text"
@@ -1029,6 +966,8 @@ class VectorPipeline(PipelineRunner):
                 if not buf:
                     buf_page = item.get("page_idx", 0)
                 buf.append(text)
+                if item.get("artifact_urls"):
+                    buf_urls.extend(item["artifact_urls"])
                 buf_last_page = item.get("page_idx", 0)
                 continue
 

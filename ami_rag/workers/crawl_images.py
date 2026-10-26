@@ -1,16 +1,14 @@
-import asyncio
-import hashlib
-import logging
+"""Tách section 'Hình ảnh' khỏi text crawl.
+
+URL ảnh gốc được giữ lại trong ``artifact_urls`` của text item (client tự
+dùng URL nguồn); ảnh crawl KHÔNG còn được tải về MinIO (đã bỏ CrawlImageWorker
+— ảnh cũ dưới MinIO dọn bằng `ami-rag cleanup --crawl-assets`).
+"""
+
 import re
-from io import BytesIO
 from urllib.parse import urlparse
 
-import httpx
-
-from ami_rag.storage.assets import minio_http_client
 from ami_rag.textnorm import fold_text
-
-logger = logging.getLogger(__name__)
 
 _IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _IMAGE_BULLET_RE = re.compile(r"^\s*[-*]\s*(https?://\S+)\s*$", re.MULTILINE)
@@ -28,14 +26,6 @@ _IMAGE_EXTS = (
     ".tif",
     ".svg",
     ".avif",
-)
-
-
-# shortcut: tắt verify SSL cho 2 domain trường (chuỗi chứng chỉ gãy) - chấp nhận
-# rủi ro MITM vì chỉ crawl 2 nguồn nội bộ này; chặt hơn thì pin issuer cert.
-_TRUSTED_NO_SSL_VERIFY_DOMAINS = (
-    "ptit.edu.vn",
-    "ptithcm.edu.vn",
 )
 
 
@@ -132,171 +122,3 @@ def split_image_section(text: str) -> tuple[list[str], str]:
         return [], text
     kept = "\n".join(ln for k, ln in enumerate(lines) if k not in remove).rstrip()
     return urls, kept
-
-
-def _ext_from_url(url: str, content_type: str | None) -> str:
-    for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".webm", ".mp4"):
-        if ext in url.lower():
-            return ext.lstrip(".")
-    if content_type:
-        subtype = content_type.rsplit("/", 1)[-1].split(";")[0]
-        if subtype and len(subtype) <= 5:
-            return subtype
-    return "bin"
-
-
-def _is_trusted_no_ssl_host(host: str | None) -> bool:
-    """ptit.edu.vn / ptithcm.edu.vn (và subdomain) được tin cậy -> bỏ verify SSL."""
-    if not host:
-        return False
-    host = host.lower()
-    return any(
-        host == domain or host.endswith("." + domain)
-        for domain in _TRUSTED_NO_SSL_VERIFY_DOMAINS
-    )
-
-
-def _classify_crawl_error(exc: Exception) -> str:
-    """Nhóm lỗi tải ảnh crawl cho metric ``crawl_image_failures_total{reason}``."""
-    import ssl
-
-    from minio.error import S3Error
-
-    if isinstance(exc, ssl.SSLError) or isinstance(
-        getattr(exc, "__cause__", None), ssl.SSLError
-    ):
-        return "ssl"
-    if isinstance(exc, httpx.TooManyRedirects):
-        return "redirect"
-    if isinstance(exc, httpx.HTTPStatusError):
-        return "http"
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-        return "connect"
-    if isinstance(exc, S3Error):
-        return "minio"
-    return "other"
-
-
-class CrawlImageWorker:
-    """Download crawl images into MinIO so multimodal (VLM) processing and
-    /rag responses can reference durable objects instead of remote URLs.
-
-    Always on (no env switch). Idempotent: an object key is
-    derived from (document_id, sha256(url)) and existing objects are reused.
-    """
-
-    def __init__(
-        self,
-        endpoint: str,
-        access_key: str,
-        secret_key: str,
-        bucket: str,
-        prefix: str,
-        secure: bool = False,
-        timeout: int = 60,
-    ):
-        self._endpoint = endpoint
-        self._access_key = access_key
-        self._secret_key = secret_key
-        self._bucket = bucket
-        self._prefix = prefix.strip("/")
-        self._secure = secure
-        self._timeout = timeout
-        self._client = None
-
-    def _get_client(self):
-        if self._client is None:
-            from minio import Minio
-
-            self._client = Minio(
-                self._endpoint,
-                access_key=self._access_key,
-                secret_key=self._secret_key,
-                secure=self._secure,
-                http_client=minio_http_client(),
-            )
-        return self._client
-
-    def collect_image_urls(self, doc: dict) -> list[str]:
-        urls: list[str] = []
-        metadata = doc.get("metadata") or {}
-        for item in metadata.get("images") or []:
-            url = item.get("url") if isinstance(item, dict) else item
-            if isinstance(url, str) and url.startswith("http"):
-                urls.append(url)
-        content = doc.get("content") or ""
-        urls.extend(m.group(1) for m in _IMAGE_MARKDOWN_RE.finditer(content))
-        urls.extend(m.group(1) for m in _IMAGE_BULLET_RE.finditer(content))
-        seen: set[str] = set()
-        unique = []
-        for url in urls:
-            if url not in seen:
-                seen.add(url)
-                unique.append(url)
-        return unique
-
-    def _download(self, url: str) -> tuple[bytes, str | None]:
-        from urllib.parse import urljoin, urlparse
-
-        current_url = url
-        for _ in range(10):
-            parsed = urlparse(current_url)
-            trusted = parsed.scheme == "https" and _is_trusted_no_ssl_host(
-                parsed.hostname
-            )
-            with httpx.Client(
-                timeout=self._timeout,
-                follow_redirects=False,
-                verify=not trusted,
-            ) as client:
-                resp = client.get(current_url)
-            status = getattr(resp, "status_code", 0)
-            if isinstance(status, int) and status in (301, 302, 303, 307, 308):
-                location = resp.headers.get("location")
-                if not location:
-                    resp.raise_for_status()
-                current_url = urljoin(current_url, location)
-                continue
-            resp.raise_for_status()
-            return resp.content, resp.headers.get("content-type")
-        raise httpx.TooManyRedirects("exceeded redirect limit", request=None)
-
-    def _upload(self, object_name: str, data: bytes, content_type: str | None) -> None:
-        client = self._get_client()
-        if not client.bucket_exists(self._bucket):
-            client.make_bucket(self._bucket)
-        client.put_object(
-            self._bucket,
-            object_name,
-            data=BytesIO(data),
-            length=len(data),
-            content_type=content_type or "application/octet-stream",
-        )
-
-    def _exists(self, object_name: str) -> bool:
-        from minio.error import S3Error
-
-        try:
-            self._get_client().stat_object(self._bucket, object_name)
-            return True
-        except S3Error:
-            return False
-
-    async def ensure_in_minio(self, doc_id: str, url: str) -> str | None:
-        """Download one image and store it in MinIO; returns the object key."""
-        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
-        object_name = f"{self._prefix}/{doc_id}/{url_hash}.{_ext_from_url(url, None)}"
-        try:
-            if await asyncio.to_thread(self._exists, object_name):
-                return object_name
-            data, content_type = await asyncio.to_thread(self._download, url)
-            await asyncio.to_thread(self._upload, object_name, data, content_type)
-            return object_name
-        except Exception as exc:
-            from ami_rag.observability import INGEST_CRAWL_IMAGE_FAILURES_TOTAL
-
-            INGEST_CRAWL_IMAGE_FAILURES_TOTAL.labels(
-                reason=_classify_crawl_error(exc)
-            ).inc()
-            logger.warning("crawl image %s (doc=%s) lỗi: %r", url, doc_id, exc)
-            return None
