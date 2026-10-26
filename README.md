@@ -36,7 +36,7 @@ Các artifact trung gian (`content_list.json`, `descriptions.json`, `chunks.json
 | Qdrant | `http://localhost:6333` | Vector store hybrid |
 | Redis | `redis://localhost:6379/0` | Stream `rag:ingest` cho ingest worker |
 | MinIO | `localhost:9000` | File gốc, ảnh/bảng đã tách, artifacts trung gian; presigned URL trả về client |
-| Embed server BGE-M3 | `:8008` (repo `embedding-server`) | `BAAI/bge-m3`: dense 1024 + sparse, auth `Bearer BGE_API_KEY`, tối đa 64 text/request |
+| Embed server Vintern | `:8007` (repo `vintern-embedding-server`) | `5CD-AI/Vintern-Embedding-1B`: multi-vector per-token dim 128, nhận ảnh `image_b64`, auth `Bearer EMB_API_KEY`, tối đa 8 item/request |
 | Rerank BGE | `:8010` (repo `rerank`) | `BAAI/bge-reranker-v2-m3`: documents text-only, tối đa 100 docs/request |
 | OCR fallback Vinter | `:8090` (tuỳ chọn) | `5CD-AI/Vintern-1B-v3_5` — phòng khi OCR service chính lỗi/treo/tra rỗng |
 
@@ -47,7 +47,7 @@ Yêu cầu: Python 3.10+ và [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync --extra service
 cp .env.ami.example .env   # điền QDRANT_URL, MINIO_ENDPOINT/KEY, MONGO_URI, REDIS_URL,
-                           # CAPTION_LLM_API_KEY, BGE_API_KEY (EMBED_SERVER_TOKEN), ...
+                           # CAPTION_LLM_API_KEY, EMB_API_KEY (EMBED_SERVER_TOKEN), ...
 make start_docker          # compose: ami-rag-api :8009 + ami-rag-worker :9109
 ```
 
@@ -69,12 +69,11 @@ GPU cho MinerU là tuỳ chọn: chạy được trên CPU (~5x chậm hơn). Co
 | `API_PORT` | `8009` | Port API |
 | `WORKER_ENABLED` | `true` | `true` = API nhúng worker; compose đặt `false` và chạy `ami-rag-worker` riêng |
 | `WORKER_METRICS_PORT` | `9109` | Port `/metrics` của worker độc lập |
-| `EMBED_BACKEND` | `bge` | Backend embed (`auto\|custom\|openai\|bge`) |
-| `EMBED_SERVER_URL` | `http://localhost:8008` | Server BGE-M3 (trong Docker: `http://bge-m3-embed:8008`) |
-| `EMBED_MODEL` | `BAAI/bge-m3` | Model embed |
-| `EMBED_DIM` | `1024` | Số chiều dense |
-| `EMBED_RETURN_SPARSE` | `true` | Lấy thêm sparse lexical weights cho hybrid |
-| `EMBED_BATCH_SIZE` | `32` | ≤ 64 (giới hạn server BGE-M3) |
+| `EMBED_BACKEND` | `vintern` | Backend embed (`auto\|vintern\|custom\|openai`) |
+| `EMBED_SERVER_URL` | `http://localhost:8007` | Server Vintern-Embedding (trong Docker: `http://vintern-embed:8007`) |
+| `EMBED_MODEL` | `5CD-AI/Vintern-Embedding-1B` | Model embed multi-vector |
+| `EMBED_DIM` | `128` | Số chiều mỗi token vector |
+| `EMBED_BATCH_SIZE` | `8` | ≤ 8 (giới hạn server Vintern) |
 | `RERANK_BACKEND` | `legacy` | BGE reranker text-only (`auto\|legacy\|vllm`) |
 | `RERANK_BASE_URL` | `http://localhost:8010` | Rerank service |
 | `RERANK_MULTIMODAL` | `false` | Chỉ backend `vllm` mới rerank kèm ảnh |

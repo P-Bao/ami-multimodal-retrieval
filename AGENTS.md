@@ -42,7 +42,33 @@ This project is indexed by GitNexus as **ami-multimodal-retrieval** (5488 symbol
 
 <!-- gitnexus:end -->
 
-# Task hiện hành — Bỏ tải ảnh crawl: trả URL gốc qua `artifact_urls` (26/10/2026)
+# Task hiện hành — Vintern-Embedding multi-vector: client + Qdrant MaxSim + image bytes (26/10/2026)
+
+Trạng thái: **code xong, chưa reindex** (nhánh `feature/vintern-embedding`). Đổi embed sang `5CD-AI/Vintern-Embedding-1B` qua server mới `vintern-embedding-server` (container `vintern-embed:8007`, network `ami-network`). **Backend BGE đã xoá** (client, config, test). Rerank :8010 không đổi.
+
+## Nội dung
+1. **Client multi-vector** — `ami_rag/core/vintern_embedder.py` (`VinternEmbedder`): handshake `GET /info` so model_name + dim (128) + flag multivector; instruction_ns từ query/document_instruction. `embed_query(text)` → 1 item `{type:"query", text}` → trả **multi-vector** `vectors[0]` = list token vector dim 128. `embed_documents` batch `{type:"document", text?/image_b64?}`, tối đa 8 item/request (`EMBED_BATCH_SIZE=8`), `EMBED_MAX_CONCURRENCY=2`. Atribut `supports_images=True`, `is_multivector=True`. **Không có** `embed_documents_sparse`/`embed_query_sparse`. `build_vintern_embedder(settings)`.
+2. **Ràng buộc item server**: query = text-only; document = **text XOR image_b64** (gửi cả hai → 422). Client `_to_embed_payload` luôn gửi item ảnh **image-only**. Per-token vectors L2-normalize phía model. Query dài cắt ~100 token phía processor (response `truncated`). Auth `Bearer EMB_API_KEY`; payload guard 64MB; server tự chia batch khi OOM.
+3. **Qdrant multivector** — `ensure_collection(name, dim, *, sparse=True, multivector=False)`: `multivector=True` tạo named vector `dense` (COSINE) kèm `MultiVectorConfig(MAX_SIM)`, KHÔNG sparse. Collection có sẵn thiếu `multivector_config` ở `dense` → `VectorStoreError` (reindex cần collection mới — đối xứng check sparse). Query multi-vector chạy qua dense-only path có sẵn (`query=vector, using="dense"`); hybrid sparse path giữ cho legacy embedder. `_point_estimate` đếm tổng float multi-vector (64 token × 128 dim = 8192 float/point).
+4. **Pipeline image bytes** — `_prepare_embed_items`: embedder `supports_images` → chunk ảnh có `asset_key` fetch MinIO (`get_bytes`) gắn `image_b64` (image-only); lỗi/thiếu bytes → fallback caption text. Chunk text/table giữ text item (table KHÔNG gửi `table_body` kèm ảnh). Embedder thường → caption-only `list[str]` như cũ. `_stage_embed`/`ChunkRecord.vector` nới type `list[float] | list[list[float]]`, luồng không đổi.
+5. **Settings (nguồn sự thật `ami_rag/settings.py`)**: `EMBED_BACKEND=vintern`, `EMBED_SERVER_URL=http://localhost:8007`, `EMBED_MODEL=5CD-AI/Vintern-Embedding-1B`, `EMBED_DIM=128`, `EMBED_IMAGE_TOKEN_RESERVE=1792`, `EMBED_BATCH_SIZE=8`, `EMBED_MAX_CONCURRENCY=2`, `EMBED_MAX_INPUT_TOKENS=8192`; **XÓA `EMBED_RETURN_SPARSE`**; `resolve_embed_backend`: auto model chứa `vintern` → vintern (bỏ nhánh bge); backends legacy `custom`/`openai` giữ nguyên. RERANK_* không đụng.
+6. **Xoá BGE**: `ami_rag/core/bge_embedder.py`, `tests/test_bge_embedder.py`, `tests/ami_service/test_settings_bge.py` (thay `test_settings_vintern.py`), mọi config/references. Machinery sparse của `QdrantVectorStore` + `embed_*_sparse` branch giữ lại (harmless, cho legacy embedder).
+
+## Runbook reindex (máy A) — collection mới `multimodal__vintern-embedding-1b__v1`
+Index BGE-M3 cũ (dim 1024, single-vector) KHÔNG dùng được — bắt buộc reindex:
+```bash
+ami-rag status --check-embed-server                          # :8007 + :8010 sẵn sàng
+ami-rag reindex --stale --from-stage embed --dry-run         # scope + cache hits
+ami-rag reindex --stale --from-stage embed --limit 20 --yes  # thử lô nhỏ trước
+ami-rag reindex --stale --from-stage embed --batch 20 --yes  # chạy thật, ngắt quãng
+ami-rag cleanup --stale-models --purge-cache-model "BAAI/bge-m3" --yes   # sau khi index mới ổn
+```
+- `--from-stage embed` dùng lại `chunks.json` (không parse/describe/chunk, không gọi LLM). Doc thiếu `chunks.json` → bỏ `--from-stage` (per-doc tự chọn `chunk`).
+- Cache SQLite key `model|dim|instruction_ns|sha256(text|image)` — giá trị cache là list token vectors lồng.
+
+---
+
+# Task trước — Bỏ tải ảnh crawl: trả URL gốc qua `artifact_urls` (26/10/2026)
 
 Trạng thái: **HOÀN TẤT** (branch `main`). Doc crawl (`mongo_text`) KHÔNG còn tải ảnh section 'Hình ảnh' về MinIO — parse tách URL gốc vào `artifact_urls` của text item, API trả thẳng (fallback presign chỉ cho doc không có `artifact_urls` trong payload, vd doc crawl index trước đây).
 
@@ -113,21 +139,21 @@ Chi tiết lịch sử: `git log` (`7221759`..`4c813ca`), `docs/ami_service.md`.
 ## Service máy B (HTTP)
 | Port | Repo (ngoài RAG-Anything) | Vai trò |
 |---|---|---|
-| 8008 | `embedding-server` | `bge-m3-embed` — `BAAI/bge-m3`: dense 1024 + sparse lexical weights, auth `Bearer BGE_API_KEY`, tối đa 64 text/request, max_length 8192 |
+| 8007 | `vintern-embedding-server` | `vintern-embed` — `5CD-AI/Vintern-Embedding-1B`: multi-vector per-token dim 128 (custom_text_proj 896→128), nhận ảnh image_b64, auth `Bearer EMB_API_KEY`, tối đa 8 item/request |
 | 8010 | `rerank` | BGE reranker `BAAI/bge-reranker-v2-m3`: documents text-only, tối đa 100/request |
 | 8090 | `D:\Code\Python\Ami\RAG\vintern-vllm\` | OCR fallback `5CD-AI/Vintern-1B-v3_5` (đã build + 22 test; chưa git init; chạy thật chờ GPU máy B) |
 
-- Contract embedding-server (client `BGEM3Embedder` đã đối chiếu khớp): `GET /v1/models` → `{"data": [{"id": "BAAI/bge-m3", ...}]}`; `POST /embed` với `{"texts": [...], "return_dense": true, "return_sparse": bool}` → `{"dense_vecs": [[float]], "sparse_weights": [{"<token_id>": w}]}` (token_id dạng chuỗi); auth `Authorization: Bearer` trùng `BGE_API_KEY` server; 400 khi >64 text hoặc text rỗng, 401 sai key. Rerank :8010 `POST /rerank` `{query, documents, top_n}` → `{results: [{index, relevance_score}]}`, documents text-only; `RERANK_FUSION=rrf` gửi `top_n=len` để nhận full scores (rrf hoạt động cả legacy).
+- Contract vintern-embedding-server (client `VinternEmbedder` đã đối chiếu khớp): `GET /health` → 503 khi chưa load, 200 `{status, model, device, dim}`; `GET /info` → `{model_name, dim=128, max_input_tokens, multivector: true, normalize: false, query_instruction, document_instruction, server_version, device, dtype, native_dim=896}`; `POST /embed` `{"items": [{type, text?, image_b64?}]}` (tối đa 8 item/request, giữ thứ tự) → `{model_name, dim, vectors: [items][tokens][128], truncated: [int]}`; query = text-only, document = text XOR image_b64 (cả hai → 422); auth `Authorization: Bearer` trùng `EMB_API_KEY` server; payload guard 64MB; OOM tự chia batch. Rerank :8010 `POST /rerank` `{query, documents, top_n}` → `{results: [{index, relevance_score}]}`, documents text-only; `RERANK_FUSION=rrf` gửi `top_n=len` để nhận full scores (rrf hoạt động cả legacy).
 - Contract gateway vintern (client `VinterOcrClient` đã đối chiếu khớp): `POST /v1/ocr` multipart `file` (PDF/ảnh) + `mode=text|table` + `pages` (`1-5`/`1,3,7`) + `dpi`; response `mode=text` → `{pages, text, page_texts: [{page, text}]}`, `mode=table` → `{pages, tables: [{page, html, markdown}]}`; `GET /health` → `{status, model, vllm}`; lỗi 400 (file/mode/trang), 401 (thiếu `Authorization: Bearer`), 502 (vLLM chết), 503 (OOM sau retry). Cần `templates/vintern-ocr.jinja` cho vLLM (tokenizer Vinter đóng template Qwen text-only, không sinh `<image>`).
-- Backend dispatch: `EMBED_BACKEND` (`auto|custom|openai|bge`; auto: model chứa `bge` → bge, prefix `Qwen/` → custom) + `RERANK_BACKEND` (`auto|legacy|vllm`; auto: rỗng/chứa `bge` → legacy BGE text-only) + `RERANK_MULTIMODAL` (default False). Resolver: `settings.resolve_embed_backend`/`resolve_rerank_backend`; factory `build_embedder`; cli `_build_embedder`.
-- Multimodal: `_prepare_embed_items` giờ **caption-only** — trả `list[str]`, không nạp ảnh bytes cho embed (caption VI do describe stage sinh). API trả thêm `artifact_urls` = presigned mọi ảnh doc qua `presign_doc_images`. Dim 1024.
-- URL default `EMBED_SERVER_URL` = `http://localhost:8008`, `RERANK_BASE_URL` = `http://localhost:8010`; trong Docker trỏ hostname service compose của bộ BGE.
+- Backend dispatch: `EMBED_BACKEND` (`auto|vintern|custom|openai`; auto: model chứa `vintern` → vintern, prefix `Qwen/` → custom, còn lại → openai) + `RERANK_BACKEND` (`auto|legacy|vllm`; auto: rỗng/chứa `bge` → legacy BGE text-only) + `RERANK_MULTIMODAL` (default False). Resolver: `settings.resolve_embed_backend`/`resolve_rerank_backend`; factory `build_embedder`; cli `_build_embedder`.
+- Multimodal: `_prepare_embed_items` — embedder `supports_images` (Vintern): chunk ảnh gắn `image_b64` image-only (fetch MinIO; thiếu bytes → fallback caption), text/table giữ text item; embedder thường: caption-only `list[str]` (caption VI do describe stage sinh). API trả `artifact_urls` = presigned mọi ảnh doc qua `presign_doc_images`. Dim 128, collection `multimodal__vintern-embedding-1b__v1` (named vector `dense` multivector MaxSim).
+- URL default `EMBED_SERVER_URL` = `http://localhost:8007`, `RERANK_BASE_URL` = `http://localhost:8010`; trong Docker trỏ hostname service compose (`vintern-embed:8007`).
 
 ## Vận hành
 - `ami-rag status [--check-embed-server]` — `_check_embed_server` backend-agnostic (`/health` + `embedder.verify()`); doc lỗi nằm ở `failed` kèm `error`/`error_stage`.
 - `ami-rag reindex --scan` (doc legacy `processed` → pending) / `--all --from-stage <stage>` / `--dry-run` / `--doc <id>`; from_stage per-doc tự chọn (`chunk` khi `content_list` đã có trong MinIO, full parse khi thiếu). Doc crawl index trước tính năng ảnh crawl → `--from-stage parse` (docs §7 runbook).
 - `ami-rag cleanup --stale-models` (xoá Qdrant `{WORKSPACE}__*` không phải collection hiện tại) + `--purge-cache-model "<model>"` (xoá cache SQLite theo prefix `{MODEL}|`). Helpers: `legacy_cleanup.find_stale_model_collections`, `EmbeddingCache.delete_by_prefix`.
-- Embed client: handshake + probe xác minh model/dim, batch `EMBED_BATCH_SIZE` + `EMBED_MAX_CONCURRENCY`, cache SQLite (`model|dim|instruction_ns|sha256`), retry CHỈ transient (timeout/5xx/429/connect — không bao giờ 4xx), circuit breaker 5 fail liên tiếp → `EmbedCircuitOpen`.
+- Embed client: handshake xác minh model/dim, batch `EMBED_BATCH_SIZE` + `EMBED_MAX_CONCURRENCY`, cache SQLite (`model|dim|instruction_ns|sha256`; giá trị multi-vector là list lồng), retry CHỈ transient (timeout/5xx/429/connect — không bao giờ 4xx), circuit breaker 5 fail liên tiếp → `EmbedCircuitOpen`.
 - OCR service `.153:12006` đã treo toàn cục (accept TCP nhưng ReadTimeout mọi endpoint) → đã có fallback Vinter (`OCR_FALLBACK_*`, `docs/ami_service.md` §5.4): primary lỗi/timeout/rỗng → `VinterOcrClient` :8090, cả hai lỗi → text dùng PyMuPDF local / bảng dùng html pdfplumber. Log warning `chuyển sang fallback Vinter` cho biết service chính đang chết.
 - Caption ảnh (`docs/ami_service.md` §5.3): `IMAGE_DESCRIBE_MODE` `auto|gemini|vision|none`; ảnh được materialize từ MinIO sang temp dir (`img_path`) trước khi gọi processor — đã fix bug vision đọc temp dir đã xoá. Deploy máy A cần `CAPTION_LLM_API_KEY` (env) để bật Gemini; mô tả ảnh đổi → `ami-rag reindex --all --from-stage describe`.
 - Chunk (docs §5.5): `chunk_text` v2 + `_build_chunks` gom item text liên tiếp + prefix tiêu đề doc; `CHUNK_MIN_CHARS` (200) gộp chunk mồ côi. `CHUNKER_VERSION` là **tên collection** — đổi ⇒ phải `reindex --all --from-stage chunk` (không gọi LLM) rồi `cleanup --stale-models`.

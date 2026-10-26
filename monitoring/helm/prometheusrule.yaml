@@ -55,7 +55,7 @@ spec:
             severity: warning
           annotations:
             summary: "Embed loi khi ingest"
-            description: "{{ $value }} lan/s embed loi trong 5 phut. Kiem tra embedding-server :8008 (BGE_API_KEY, GPU) va log ami-rag-worker."
+            description: "{{ $value }} lan/s embed loi trong 5 phut. Kiem tra vintern-embedding-server :8007 (EMB_API_KEY, GPU) va log ami-rag-worker."
     - name: multimodal-rag-retrieval
       rules:
         - alert: RagRetrievalErrorRate
@@ -99,4 +99,4 @@ spec:
             severity: warning
           annotations:
             summary: "Embed query that bai khi retrieval"
-            description: "{{ $value }} lan/s embed query loi trong 5 phut - request /v2/rag tra loi. Kiem tra embedding-server :8008 (BGE_API_KEY, GPU, model/dim)."
+            description: "{{ $value }} lan/s embed query loi trong 5 phut - request /v2/rag tra loi. Kiem tra vintern-embedding-server :8007 (EMB_API_KEY, GPU, model/dim)."
