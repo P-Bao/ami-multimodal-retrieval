@@ -364,13 +364,35 @@ async def test_artifact_urls_presigned_doc_images(client, app):
     docs = (await client.post("/v2/rag/", json=BODY)).json()["documents"]
     assert docs
     for d in docs:
-        # doc đã resolve: presign_doc_images chạy cho cả crawl lẫn pdf
+        # doc đã resolve + payload không có artifact_urls (chunk pdf/text seed):
+        # presign_doc_images chạy như cũ
         assert d["artifact_urls"] == [
             f"https://minio/presigned/rag-assets/{d['metadata']['document_id']}/img1.png"
         ]
     # chunk có asset_key (ảnh pdf) vẫn giữ artifact_url riêng, trùng URL doc
     image_doc = next(d for d in docs if d["modality"] == "image")
     assert image_doc["artifact_url"] == image_doc["artifact_urls"][0]
+
+
+async def test_artifact_urls_chunk_payload_wins_no_presign(client, app, fake_pipeline):
+    """Chunk có artifact_urls trong payload (doc crawl) -> trả URL gốc, không presign."""
+    store = _ImageAssetStore()
+    fake_pipeline.vector_store.points["chunk-crawl"] = {
+        "doc_id": "64b000000000000000000099",
+        "content": "Bài crawl.",
+        "modality": "text",
+        "chunk_id": "chunk-crawl",
+        "artifact_urls": ["https://ptit.edu.vn/a.jpg"],
+    }
+    app.dependency_overrides[rag_routes.get_asset_store] = lambda: store
+    docs = (await client.post("/v2/rag/", json={**BODY, "top_k": 10})).json()[
+        "documents"
+    ]
+    crawl_doc = next(d for d in docs if d["reference_id"] == "chunk-crawl")
+    # URL gốc crawl trả thẳng, KHÔNG presigned
+    assert crawl_doc["artifact_urls"] == ["https://ptit.edu.vn/a.jpg"]
+    # doc này không được presign (không list MinIO) — các doc pdf khác vẫn presign
+    assert "64b000000000000000000099" not in store.presign_doc_calls
 
 
 async def test_artifact_urls_presigned_once_per_doc(client, app):

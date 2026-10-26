@@ -173,7 +173,12 @@ async def _presign_asset(asset_store, asset_key: str | None) -> str | None:
 
 
 async def _build_documents(scored, resolver, asset_store=None) -> list:
-    """Build v2 documents: resolve mỗi chunk qua doc_id (payload mang doc_id trực tiếp)."""
+    """Build v2 documents: resolve mỗi chunk qua doc_id (payload mang doc_id trực tiếp).
+
+    `artifact_urls`: chunk payload có sẵn URL gốc (doc crawl — artifact_urls
+    từ parse stage) thì trả thẳng; ngược lại presign MinIO cho doc đã resolve
+    (cache per request: 1 lần list MinIO per doc_id, URL luôn mới).
+    """
     documents = []
     resolved_cache: dict[str, dict | None] = {}
     urls_cache: dict[str, list[str]] = {}
@@ -187,8 +192,8 @@ async def _build_documents(scored, resolver, asset_store=None) -> list:
         resolved = resolved_cache[doc_id]
         modality = chunk.get("modality") or "text"
         page = chunk.get("page")
-        artifact_urls: list[str] = []
-        if resolved is not None and asset_store is not None:
+        artifact_urls = list(chunk.get("artifact_urls") or [])
+        if not artifact_urls and resolved is not None and asset_store is not None:
             # 1 lần list MinIO per doc_id mỗi request (trước đây N chunk cùng
             # doc list N lần); cache per-request nên URL luôn mới.
             if doc_id not in urls_cache:
