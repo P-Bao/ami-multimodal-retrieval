@@ -168,6 +168,7 @@ class _Args:
         self.mongo_only = False
         self.qdrant_only = False
         self.stale_models = False
+        self.crawl_assets = False
         self.purge_cache_model = []
         # Throttle: dùng 0 (tắt nghỉ) chứ không mirror parser default (0.2/2.0)
         # để test có sẵn không chết vì chờ sleep thật.
@@ -1023,3 +1024,89 @@ async def test_cleanup_purge_cache_model(tmp_path, capsys):
     cache = EmbeddingCache(cache_path)
     assert cache.count() == 1
     cache.close()
+
+
+# --crawl-assets -------------------------------------------------------------------
+
+
+class _FakeCrawlAssetStore:
+    """list_doc_images / load_json / delete_objects cho --crawl-assets (MinIO giả)."""
+
+    def __init__(self, images: dict[str, list[str]], jsons: dict[str, object]):
+        self.images = images  # doc_id -> các key ảnh
+        self.jsons = jsons  # key MinIO -> data (descriptions.json)
+        self.deleted: list[str] = []
+
+    def doc_prefix(self, doc_id: str) -> str:
+        return f"rag-assets/{doc_id}/"
+
+    def list_doc_images(self, doc_id: str) -> list[str]:
+        return list(self.images.get(doc_id, []))
+
+    def load_json(self, key: str):
+        return self.jsons.get(key)
+
+    def delete_objects(self, keys: list[str]) -> int:
+        self.deleted.extend(keys)
+        return len(keys)
+
+
+def _crawl_assets_fixture():
+    """1 doc crawl (marker source), 1 doc pdf, 1 doc pending thiếu marker (tra Mongo)."""
+    store = _make_store()
+    store.mark_stage("crawl-1", "parse", source="mongo_text")
+    store.mark_stage("pdf-1", "parse", source="minio_parse")
+    store.ensure_pending("pending-1")
+    docs_repo = FakeScanDocsRepo(
+        {
+            "crawl-1": {"_id": "crawl-1", "original_file_name": None},
+            "pdf-1": {"_id": "pdf-1", "original_file_name": "a.pdf"},
+            "pending-1": {"_id": "pending-1", "original_file_name": None},
+        }
+    )
+    asset_store = _FakeCrawlAssetStore(
+        images={
+            "crawl-1": ["rag-assets/crawl-1/aaa.jpg", "rag-assets/crawl-1/bbb.png"],
+            "pending-1": ["rag-assets/pending-1/ccc.jpg"],
+        },
+        jsons={"rag-assets/crawl-1/descriptions.json": []},
+    )
+    return store, docs_repo, asset_store
+
+
+async def test_cleanup_crawl_assets_dry_run_counts_without_delete(capsys):
+    store, docs_repo, asset_store = _crawl_assets_fixture()
+    rc = await cmd_cleanup(
+        _Args(crawl_assets=True, yes=False),
+        settings=_make_settings(),
+        store=store,
+        docs_repo=docs_repo,
+        asset_store=asset_store,
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # crawl-1: 2 ảnh + descriptions.json; pending-1: 1 ảnh (không caption); pdf bỏ qua
+    assert "crawl-1: 3 object" in out
+    assert "pending-1: 1 object" in out
+    assert "dry-run: sẽ xoá 4 object" in out
+    assert asset_store.deleted == []
+
+
+async def test_cleanup_crawl_assets_yes_deletes_images_and_captions(capsys):
+    store, docs_repo, asset_store = _crawl_assets_fixture()
+    rc = await cmd_cleanup(
+        _Args(crawl_assets=True, yes=True),
+        settings=_make_settings(),
+        store=store,
+        docs_repo=docs_repo,
+        asset_store=asset_store,
+    )
+    assert rc == 0
+    assert asset_store.deleted == [
+        "rag-assets/crawl-1/aaa.jpg",
+        "rag-assets/crawl-1/bbb.png",
+        "rag-assets/crawl-1/descriptions.json",
+        "rag-assets/pending-1/ccc.jpg",
+    ]
+    out = capsys.readouterr().out
+    assert "đã xoá 4/4 object" in out

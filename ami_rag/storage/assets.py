@@ -227,3 +227,10 @@ class MinioAssetStore:
             client.remove_object(self._bucket, obj.object_name)
             removed += 1
         return removed
+
+    def delete_objects(self, object_names: list[str]) -> int:
+        """Xoá đúng danh sách object key cho trước (cleanup chọn lọc theo doc)."""
+        client = self._get_client()
+        for name in object_names:
+            client.remove_object(self._bucket, name)
+        return len(object_names)

@@ -184,8 +184,9 @@ dashboard-apply: dashboard-configmap
 metrics-scrape-apply:
 	kubectl apply -f monitoring/k8s/multimodal-rag-retrieval-metrics-scrape.yaml
 
-# Xoa cache Python / pytest / ruff.
+# Xoa cache Python/pytest/ruff + anh crawl con sot trong MinIO (best-effort: MinIO khong chay cung khong fail).
 clean:
 	find . -path ./.venv -prune -o -type d -name "__pycache__" -exec rm -rf {} +
 	find . -path ./.venv -prune -o -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
 	rm -rf .pytest_cache .ruff_cache
+	-uv run ami-rag cleanup --crawl-assets --yes

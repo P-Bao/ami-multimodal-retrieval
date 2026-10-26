@@ -60,6 +60,12 @@ def _build_mongo_db(settings):
     return MongoClient(settings.MONGO_URI, tz_aware=True)[settings.RAG_DB]
 
 
+def _build_asset_store(settings):
+    from ami_rag.core.factory import get_asset_store
+
+    return get_asset_store()
+
+
 def _build_qdrant_client(settings):
     from qdrant_client import QdrantClient
 
@@ -486,18 +492,100 @@ def _from_stage_for(row: dict, from_stage: str | None, runner) -> str | None:
     return None
 
 
+def _doc_is_crawl(row: dict, docs_repo) -> bool:
+    """Doc crawl = nguồn mongo_text: ưu tiên marker `source` đã lưu khi parse;
+    row thiếu marker (pending/legacy) -> tra Mongo documents original_file_name."""
+    from ami_rag.sources import SOURCE_MINIO_PARSE, SOURCE_MONGO_TEXT, select_source
+
+    source = row.get("source")
+    if source in (SOURCE_MONGO_TEXT, SOURCE_MINIO_PARSE):
+        return source == SOURCE_MONGO_TEXT
+    doc = docs_repo.find_by_id(row["_id"]) if docs_repo is not None else None
+    return bool(doc) and select_source(doc) == SOURCE_MONGO_TEXT
+
+
+async def _cleanup_crawl_assets(
+    args, settings, *, store=None, docs_repo=None, asset_store=None
+) -> int:
+    """--crawl-assets: xoá ảnh crawl + descriptions.json của doc crawl khỏi MinIO.
+
+    Ảnh crawl không còn được tải về MinIO (URL gốc trả thẳng qua
+    ``artifact_urls``); object cũ dọn theo doc: mọi object ảnh dưới
+    ``{ASSET_PREFIX}/{doc_id}/`` (toàn bộ là ảnh crawl) + captions
+    ``descriptions.json`` — GIỮ content_list.json/chunks.json để reindex từ
+    stage chunk vẫn chạy. Cần --yes; không có --yes chỉ dry-run in số object.
+    """
+    from ami_rag.core.vector_pipeline import ArtifactPaths
+
+    store = store or _build_status_store(settings)
+    docs_repo = docs_repo or _build_docs_repo(settings)
+    asset_store = asset_store or _build_asset_store(settings)
+
+    rows = await asyncio.to_thread(store.all_rows)
+    crawl_ids = sorted(row["_id"] for row in rows if _doc_is_crawl(row, docs_repo))
+    if not crawl_ids:
+        print("không có doc crawl nào trong registry")
+        return 0
+
+    plan: list[tuple[str, list[str]]] = []
+    for doc_id in crawl_ids:
+        keys = await asyncio.to_thread(asset_store.list_doc_images, doc_id)
+        desc_key = ArtifactPaths.descriptions_key(asset_store, doc_id)
+        if await asyncio.to_thread(asset_store.load_json, desc_key) is not None:
+            keys = [*keys, desc_key]
+        plan.append((doc_id, keys))
+
+    total = sum(len(keys) for _, keys in plan)
+    if not args.yes or args.dry_run:
+        for doc_id, keys in plan:
+            print(f"  {doc_id}: {len(keys)} object sẽ xoá")
+        print(
+            f"dry-run: sẽ xoá {total} object (ảnh crawl + descriptions.json) của "
+            f"{len(plan)} doc crawl (chạy lại với --yes để xoá thật)"
+        )
+        return 0
+
+    deleted = 0
+    failed: list[str] = []
+    for doc_id, keys in plan:
+        if not keys:
+            continue
+        try:
+            deleted += await asyncio.to_thread(asset_store.delete_objects, keys)
+            print(f"  {doc_id}: đã xoá {len(keys)} object")
+        except Exception as exc:
+            print(f"LỖI xoá {doc_id}: {exc}")
+            failed.append(doc_id)
+    print(
+        f"cleanup crawl-assets xong: đã xoá {deleted}/{total} object "
+        f"của {len(plan)} doc crawl"
+    )
+    return 1 if failed else 0
+
+
 # --------------------------------------------------------------------------
 # cleanup
 # --------------------------------------------------------------------------
-async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None) -> int:
+async def cmd_cleanup(
+    args,
+    *,
+    settings=None,
+    mongo_db=None,
+    qdrant_client=None,
+    store=None,
+    docs_repo=None,
+    asset_store=None,
+) -> int:
     """Kiểm tra + xoá collection Mongo/Qdrant rác của pipeline LightRAG cũ.
 
     `--stale-models`: dò + xoá thêm collection Qdrant của embed model/version cũ
     (`{WORKSPACE}__*` không phải collection hiện tại — ví dụ bản Qwen sau khi đổi
     sang Nemotron). `--purge-cache-model NAME...`: xoá cache embedding SQLite theo
-    model. Chỉ đọc để dò (list + count); xoá sau khi có xác nhận. Không đụng:
-    registry `RAG_DOCUMENTS_COLLECTION`, collection Qdrant hiện tại
-    (`{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}`), collection ngoài workspace.
+    model. `--crawl-assets`: xoá ảnh crawl + captions của doc crawl khỏi MinIO
+    (nhánh riêng, chạy ngay và kết thúc). Chỉ đọc để dò (list + count); xoá sau
+    khi có xác nhận. Không đụng: registry `RAG_DOCUMENTS_COLLECTION`, collection
+    Qdrant hiện tại (`{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}`),
+    collection ngoài workspace.
     """
     from ami_rag.core.embedder import collection_name
     from ami_rag.core.legacy_cleanup import (
@@ -509,6 +597,10 @@ async def cmd_cleanup(args, *, settings=None, mongo_db=None, qdrant_client=None)
     )
 
     settings = settings or get_settings()
+    if getattr(args, "crawl_assets", False):
+        return await _cleanup_crawl_assets(
+            args, settings, store=store, docs_repo=docs_repo, asset_store=asset_store
+        )
     do_mongo = not args.qdrant_only
     do_qdrant = not args.mongo_only
 
@@ -718,6 +810,12 @@ def main() -> None:
         help="chỉ liệt kê collection legacy (kèm số document/points), không xoá",
     )
     p_cleanup.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
+    p_cleanup.add_argument(
+        "--crawl-assets",
+        action="store_true",
+        help="xoá ảnh crawl + descriptions.json của doc crawl (nguồn mongo_text) "
+        "khỏi MinIO; cần --yes, không có --yes chỉ dry-run",
+    )
     p_cleanup.add_argument(
         "--stale-models",
         action="store_true",
