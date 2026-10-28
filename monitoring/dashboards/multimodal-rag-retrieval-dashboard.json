@@ -2927,7 +2927,7 @@
               "transformations": []
             }
           },
-          "description": "Tỉ lệ truy vấn theo mode hiệu lực (dense | hybrid) — cho biết sparse/hybrid có thực sự chạy.",
+          "description": "Tỉ lệ truy vấn theo mode hiệu lực (dense | hybrid) — backend vintern multi-vector luôn dense; hybrid chỉ với embedder legacy trả sparse query.",
           "id": 33,
           "links": [],
           "title": "Search mode: dense vs hybrid",

@@ -33,7 +33,7 @@ Khi API chạy worker nhúng (`WORKER_ENABLED=true`) thì metric ingest nằm ch
 ## Dashboard
 
 Timezone cố định `Asia/Ho_Chi_Minh` — khớp label `day`/`hod` trong code; không đổi sang `browser`.
-Rows: Tổng quan · Requests theo ngày/giờ · Latency & Errors · Pipeline stages · Docs & Chunks · Danh sách trace · **Multimodal retrieval** (docs theo modality, presign failures, search mode dense/hybrid, artifact URLs trả về, query embed failures theo reason) · **Ingest pipeline** (stream pending/lag, ingest in-flight, events theo kết quả, duration P50/P95, stage time, documents theo status, parse failures, items theo modality, crawl image failures, ingest embed failures theo reason, embed cache hit rate).
+Rows: Tổng quan · Requests theo ngày/giờ · Latency & Errors · Pipeline stages · Docs & Chunks · Danh sách trace · **Multimodal retrieval** (docs theo modality, presign failures, search mode dense/hybrid — vintern luôn `dense`, xem Lưu ý, artifact URLs trả về, query embed failures theo reason) · **Ingest pipeline** (stream pending/lag, ingest in-flight, events theo kết quả, duration P50/P95, stage time, documents theo status, parse failures, items theo modality, crawl image failures, ingest embed failures theo reason, embed cache hit rate).
 
 Yêu cầu:
 - Prometheus datasource uid `prometheus`.
@@ -81,5 +81,6 @@ Metric API mới so với bản cũ: `multimodal_rag_retrieval_docs_by_modality_
 
 ## Lưu ý
 
+- Backend embed `vintern` (mặc định nhánh này): multi-vector MaxSim **dense-only** — `search_mode_total{mode}` luôn `dense`; `hybrid` chỉ xuất hiện khi embedder legacy trả sparse query. `embed_failures_total{reason}` gồm `oom` (server trả 507 khi OOM cả batch=1 — hạ `EMB_MAX_INPUT_TOKENS` server / `EMBED_MAX_INPUT_TOKENS` client về 4096 để chặn forward lớn).
 - Label `day` sinh series mới mỗi ngày (cardinality tăng dần theo thời gian chạy process).
 - `/metrics` không yêu cầu `RAG_API_KEY`; chỉ mở trong mạng nội bộ hoặc chặn ở reverse proxy.
