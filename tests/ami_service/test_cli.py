@@ -716,6 +716,27 @@ def test_reindex_parser_defaults(monkeypatch):
     assert args.batch_sleep == 2.0
 
 
+def test_recaption_parser_forces_describe(monkeypatch):
+    """recaption đi qua cmd_reindex nhưng ép from_stage=describe, không --scan."""
+    import sys
+
+    from ami_rag import cli
+
+    captured = {}
+
+    async def fake_cmd_reindex(args):
+        captured["args"] = args
+
+    monkeypatch.setattr(cli, "cmd_reindex", fake_cmd_reindex)
+    monkeypatch.setattr(sys, "argv", ["ami-rag", "recaption", "--all"])
+    cli.main()
+    args = captured["args"]
+    assert args.from_stage == "describe"
+    assert args.scan is False
+    assert args.all is True
+    assert args.limit == 0
+
+
 # --------------------------------------------------------------------------
 # cleanup
 # --------------------------------------------------------------------------

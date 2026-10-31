@@ -764,10 +764,39 @@ def main() -> None:
         help="quét backend docs -> tạo pending records cho docs thiếu bản ghi, "
         "rồi reindex pending + stale (bao gồm legacy `processed` của pipeline cũ)",
     )
-    p_reindex.add_argument("--doc", nargs="*", default=[], help="id hoặc path cụ thể")
-    p_reindex.add_argument(
-        "--all", action="store_true", help="xử lý lại mọi doc có bản ghi"
-    )
+
+    def _add_reindex_common_args(p):
+        """Cờ chung reindex/recaption: chọn doc + ngắt quãng + override embed."""
+        p.add_argument("--doc", nargs="*", default=[], help="id hoặc path cụ thể")
+        p.add_argument(
+            "--all", action="store_true", help="xử lý lại mọi doc có bản ghi"
+        )
+        p.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="in số doc, số chunk cần embed, số chunk trúng cache; không gọi embed, không ghi",
+        )
+        p.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
+        p.add_argument(
+            "--embed-server-url", default=None, help="override EMBED_SERVER_URL"
+        )
+        p.add_argument(
+            "--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE"
+        )
+        p.add_argument(
+            "--limit", type=int, default=0, help="chỉ xử lý N doc đầu (0 = không giới hạn)"
+        )
+        p.add_argument(
+            "--sleep", type=float, default=0.2, help="giây nghỉ giữa hai doc liên tiếp"
+        )
+        p.add_argument(
+            "--batch", type=int, default=20, help="số doc mỗi lô (0 = một lô duy nhất)"
+        )
+        p.add_argument(
+            "--batch-sleep", type=float, default=2.0, help="giây nghỉ giữa hai lô"
+        )
+
+    _add_reindex_common_args(p_reindex)
     p_reindex.add_argument(
         "--from-stage",
         choices=list(STAGES[:-1]),
@@ -775,30 +804,13 @@ def main() -> None:
         help="ép làm lại từ stage này (mặc định: chunk nếu content_list đã có "
         "trong MinIO, full parse nếu thiếu)",
     )
-    p_reindex.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="in số doc, số chunk cần embed, số chunk trúng cache; không gọi embed, không ghi",
+
+    p_recaption = sub.add_parser(
+        "recaption",
+        help="chạy lại caption ảnh (Gemini) từ stage describe rồi chunk -> embed; "
+        "dùng khi prompt/ngữ cảnh/model caption đổi",
     )
-    p_reindex.add_argument("--yes", action="store_true", help="bỏ qua xác nhận")
-    p_reindex.add_argument(
-        "--embed-server-url", default=None, help="override EMBED_SERVER_URL"
-    )
-    p_reindex.add_argument(
-        "--embed-batch-size", type=int, default=None, help="override EMBED_BATCH_SIZE"
-    )
-    p_reindex.add_argument(
-        "--limit", type=int, default=0, help="chỉ xử lý N doc đầu (0 = không giới hạn)"
-    )
-    p_reindex.add_argument(
-        "--sleep", type=float, default=0.2, help="giây nghỉ giữa hai doc liên tiếp"
-    )
-    p_reindex.add_argument(
-        "--batch", type=int, default=20, help="số doc mỗi lô (0 = một lô duy nhất)"
-    )
-    p_reindex.add_argument(
-        "--batch-sleep", type=float, default=2.0, help="giây nghỉ giữa hai lô"
-    )
+    _add_reindex_common_args(p_recaption)
 
     p_cleanup = sub.add_parser(
         "cleanup",
@@ -857,7 +869,11 @@ def main() -> None:
         rc = asyncio.run(cmd_retry(args))
         if rc:
             raise SystemExit(rc)
-    elif args.command == "reindex":
+    elif args.command in ("reindex", "recaption"):
+        if args.command == "recaption":
+            # recaption = reindex ép làm lại từ describe (caption LLM chạy lại)
+            args.from_stage = "describe"
+            args.scan = False
         rc = asyncio.run(cmd_reindex(args))
         if rc:
             raise SystemExit(rc)

@@ -126,7 +126,7 @@ $(filter-out cli,$(MAKECMDGOALS)):
 endif
 
 cli:
-	@test -n "$(CLI_ARGS)" || { echo "usage: make cli [BG=1] <status|retry|reindex> [...]  (hoac ARGS=\"...\")"; exit 2; }
+	@test -n "$(CLI_ARGS)" || { echo "usage: make cli [BG=1] <status|retry|reindex|recaption> [...]  (hoac ARGS=\"...\")"; exit 2; }
 ifeq ($(BG),1)
 	@f=$$(docker compose -f $(COMPOSE_FILE) exec -T $(CLI_SERVICE) sh -c '\
 		d=$(CLI_LOG_DIR); mkdir -p $$d; f=$$d/cli-$$(date +%Y%m%d-%H%M%S).log; : > $$f; ln -sf $$f $$d/latest.log; \
