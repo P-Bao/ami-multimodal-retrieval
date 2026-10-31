@@ -71,6 +71,8 @@ def pipeline(
         PARSER="mineru",
         PARSE_METHOD="auto",
         MINERU_BACKEND="pipeline",
+        # fixture giữ đường LLM bảng để các test cũ mô phỏng processor thật
+        TABLE_DESCRIBE_MODE="llm",
         PARSE_TEXT_SOURCE="mineru",
     )
     return VectorPipeline(
@@ -1096,6 +1098,90 @@ async def test_describe_image_prompt_without_language_when_blank(
     assert "Document title" not in prompt
 
 
+class _TrackingLLMProcessor:
+    """Processor bảng giả: đếm call + đo concurrency (max request đồng thời)."""
+
+    def __init__(self, delay: float = 0.02):
+        self.calls = 0
+        self._active = 0
+        self.max_active = 0
+        self.delay = delay
+
+    async def generate_chunk_sections(
+        self, modal_content, content_type, item_info=None, entity_name=None
+    ):
+        self._active += 1
+        self.max_active = max(self.max_active, self._active)
+        try:
+            await asyncio.sleep(self.delay)
+            self.calls += 1
+            return [
+                {
+                    "description": "mô tả bảng từ LLM",
+                    "entity_info": {},
+                    "window_meta": None,
+                }
+            ]
+        finally:
+            self._active -= 1
+
+
+_TABLE_ITEM = {
+    "type": "table",
+    "table_caption": ["Bảng 1: Cơ cấu tổ chức"],
+    "table_body": "<table><tr><td>Phòng Đào tạo</td></tr></table>",
+    "page_idx": 0,
+}
+
+
+async def test_describe_table_raw_mode_skips_llm(
+    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store
+):
+    """TABLE_DESCRIBE_MODE=raw: bảng không gọi LLM, mô tả rỗng (chunk giữ table_body)."""
+    tracking = _TrackingLLMProcessor()
+    pipeline = _make_pipeline(
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
+        TABLE_DESCRIBE_MODE="raw",
+    )
+    pipeline.modal_processors = {"table": tracking}
+
+    descriptions = await pipeline._stage_describe(
+        "docX",
+        [{"type": "text", "text": "Văn bản quanh bảng.", "page_idx": 0}, dict(_TABLE_ITEM)],
+    )
+
+    assert tracking.calls == 0
+    assert descriptions[0]["type"] == "table"
+    assert descriptions[0]["description"] == ""
+
+
+async def test_describe_table_llm_mode_uses_semaphore(
+    fake_embedder, fake_vector_store, fake_asset_store, fake_status_store
+):
+    """TABLE_DESCRIBE_MODE=llm: nhiều bảng vẫn bị chặn ở QWEN_LLM_MAX_CONCURRENCY."""
+    tracking = _TrackingLLMProcessor()
+    pipeline = _make_pipeline(
+        fake_embedder,
+        fake_vector_store,
+        fake_asset_store,
+        fake_status_store,
+        TABLE_DESCRIBE_MODE="llm",
+        QWEN_LLM_MAX_CONCURRENCY=2,
+    )
+    pipeline.modal_processors = {"table": tracking}
+
+    descriptions = await pipeline._stage_describe(
+        "docX", [dict(_TABLE_ITEM) for _ in range(6)]
+    )
+
+    assert tracking.calls == 6
+    assert all(d["description"] == "mô tả bảng từ LLM" for d in descriptions)
+    assert tracking.max_active <= 2
+
+
 def test_format_image_chunk_drops_empty_summary_line(pipeline):
     """ "Tóm tắt: Không có" là nhiễu -> bỏ hẳn khi không có caption."""
     from ami_rag.core.vector_pipeline import _format_modal_chunk
@@ -1213,6 +1299,7 @@ async def test_describe_item_table_dict_repr_falls_back_to_body(
         fake_asset_store,
         fake_status_store,
         IMAGE_DESCRIBE_MODE="gemini",
+        TABLE_DESCRIBE_MODE="llm",
     )
     pipeline.modal_processors = {"table": _DictReprProc()}
     item = {

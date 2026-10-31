@@ -108,6 +108,16 @@ def _normalize_item_type(t: str | None) -> str:
     )
 
 
+def _table_describe_raw(settings) -> bool:
+    """TABLE_DESCRIBE_MODE="raw": bảng dùng table_body thẳng, không gọi LLM."""
+    return (
+        (getattr(settings, "TABLE_DESCRIBE_MODE", "raw") or "llm")
+        .strip()
+        .lower()
+        == "raw"
+    )
+
+
 @dataclass
 class Chunk:
     """Chunk đã build (trước embed)."""
@@ -438,6 +448,9 @@ class VectorPipeline(PipelineRunner):
         self._bd_extractor = None
         # Giới hạn song song cho caption ảnh (fetch MinIO + gọi caption func)
         self._caption_sem: asyncio.Semaphore | None = None
+        # Giới hạn song song cho LLM text (bảng/công thức/generic) - mỗi bảng
+        # lớn chiếm GPU 15-60s, ập cả chục cùng lúc gây dồn hàng đợi + timeout.
+        self._llm_sem: asyncio.Semaphore | None = None
         self.collection = collection_name(
             settings.WORKSPACE, settings.EMBED_MODEL, settings.CHUNKER_VERSION
         )
@@ -676,6 +689,14 @@ class VectorPipeline(PipelineRunner):
             self._caption_sem = asyncio.Semaphore(limit)
         return self._caption_sem
 
+    def _get_llm_semaphore(self) -> asyncio.Semaphore:
+        if self._llm_sem is None:
+            limit = max(
+                1, int(getattr(self.settings, "QWEN_LLM_MAX_CONCURRENCY", 2))
+            )
+            self._llm_sem = asyncio.Semaphore(limit)
+        return self._llm_sem
+
     @staticmethod
     def _image_ext(data: bytes, asset_key: str) -> str:
         """Ext file ảnh từ magic bytes; fallback suffix asset_key, cuối cùng .png."""
@@ -840,13 +861,18 @@ class VectorPipeline(PipelineRunner):
         )
         if processor is None:
             return _join_caption(item.get("text") or item.get("table_body") or "")
+        if type_ == "table" and _table_describe_raw(self.settings):
+            # raw: chunk bảng đã chứa table_body đầy đủ (_format_modal_chunk),
+            # mô tả rỗng -> bỏ hẳn dòng "Mô tả:" - không gọi LLM, không mất số liệu.
+            return ""
         try:
-            sections = await processor.generate_chunk_sections(
-                modal_content=item,
-                content_type=type_,
-                item_info=self._describe_item_info(item, index, type_, doc_title),
-                entity_name=None,
-            )
+            async with self._get_llm_semaphore():
+                sections = await processor.generate_chunk_sections(
+                    modal_content=item,
+                    content_type=type_,
+                    item_info=self._describe_item_info(item, index, type_, doc_title),
+                    entity_name=None,
+                )
             desc = str(sections[0]["description"]) if sections else ""
         except Exception as exc:
             logger.warning(
