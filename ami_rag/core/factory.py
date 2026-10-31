@@ -110,7 +110,7 @@ def _build_caption_func(settings: Settings) -> Callable | None:
         timeout=float(getattr(settings, "CAPTION_LLM_TIMEOUT", 120) or 120),
         max_retries=int(getattr(settings, "CAPTION_LLM_RETRIES", 2) or 0),
     )
-    model = getattr(settings, "CAPTION_LLM_MODEL", "") or "gemini-2.5-flash-lite"
+    model = getattr(settings, "CAPTION_LLM_MODEL", "") or "gemini-3.5-flash-lite"
 
     async def gemini_caption(
         prompt,

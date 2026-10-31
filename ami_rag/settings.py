@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     CAPTION_LLM_BASE_URL: str = (
         "https://generativelanguage.googleapis.com/v1beta/openai/"
     )
-    CAPTION_LLM_MODEL: str = "gemini-2.5-flash-lite"
+    CAPTION_LLM_MODEL: str = "gemini-3.5-flash-lite"
     # API key CHỈ từ env (.env / biến môi trường) - không commit vào repo
     CAPTION_LLM_API_KEY: str = ""
     CAPTION_LLM_TIMEOUT: int = 120
