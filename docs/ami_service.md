@@ -39,9 +39,9 @@ Hệ thống AI ──POST /v2/rag──▶ ami_rag API: embed_query multi-vecto
 - Doc id = MongoDB ObjectId. Mỗi chunk payload mang `doc_id` trực tiếp nên API tra ngược về Mongo (`ami_rag/api/resolver.py::resolve_doc_id`).
 - `created`/`updated` → `ensure_pending` + chạy pipeline từ stage `parse`; `deleted` → xoá vector Qdrant + asset MinIO + dòng registry. Nguồn không đổi (`content_hash` trùng, status `indexed`, đúng `embed_model`/`chunker_version`) thì bị bỏ qua, cả ở worker lẫn ở CLI `reindex`.
 - Pipeline (`ami_rag/core/vector_pipeline.py::VectorPipeline.run`): 5 stage `parse → describe → chunk → embed → indexed`, mỗi stage ghi trạng thái vào DocStatusStore. Kết quả trung gian lưu MinIO (`content_list.json`, `descriptions.json`, `chunks.json`) nên retry chạy tiếp từ stage lỗi, không cần parse lại; stage embed đọc lại `chunks.json` nếu có.
-- Embed (tài liệu): stage duy nhất gọi mạng thật; luôn `delete_by_doc` trước khi upsert (idempotent) rồi verify count. Embedder trả **multi-vector** (mỗi chunk một list vector per-token, `embed_documents`); cache SQLite (`EMBED_CACHE_PATH`) giữ nguyên list lồng đó. Describe là stage duy nhất có thể gọi LLM (tuỳ chọn): ảnh được caption bằng **Gemini `gemini-2.5-flash-lite`** (OpenAI-compatible, `CAPTION_LLM_*`) khi có API key; không key mà có `QWEN_VLM_MODEL` thì gửi ảnh cho VLM (`vision`); còn lại `none` = text thô caption + footnotes + ngữ cảnh (`IMAGE_DESCRIBE_MODE` — xem mục 5.3). Bảng/công thức/generic vẫn do Qwen text-only tổng hợp (`QWEN_LLM_*`).
+- Embed (tài liệu): stage duy nhất gọi mạng thật; luôn `delete_by_doc` trước khi upsert (idempotent) rồi verify count. Embedder trả **multi-vector** (mỗi chunk một list vector per-token, `embed_documents`); cache SQLite (`EMBED_CACHE_PATH`) giữ nguyên list lồng đó. Describe là stage duy nhất có thể gọi LLM (tuỳ chọn): ảnh được caption bằng **Gemini `gemini-3.5-flash-lite`** (OpenAI-compatible, `CAPTION_LLM_*`) khi có API key; không key mà có `QWEN_VLM_MODEL` thì gửi ảnh cho VLM (`vision`); còn lại `none` = text thô caption + footnotes + ngữ cảnh (`IMAGE_DESCRIBE_MODE` — xem mục 5.3). Bảng/công thức/generic vẫn do Qwen text-only tổng hợp (`QWEN_LLM_*`).
 - Retry: `WORKER_MAX_DELIVERY` lần; quá ngưỡng thì dòng registry được đánh dấu `failed` và message được ack. Event lỗi chưa đủ ngưỡng được để pending và tự giao lại (XAUTOCLAIM, `ami_rag/queue/streams.py`) sau `WORKER_RETRY_IDLE_MS` (mặc định 10 phút; cần Redis ≥ 6.2) — đặt đủ lớn hơn thời gian parse MinerU dài nhất để worker khác không "cướp" message đang xử lý. Khi `failed`, `attempts` được reset nên `reprocess_failed`/`retry --all-failed` có đủ ngân sách thử lại.
-- LLM (describe): profile `qwen-selfhost` (vLLM, OpenAI-compatible) qua `QWEN_LLM_*` cho bảng/công thức/generic; **caption ảnh dùng Gemini** `gemini-2.5-flash-lite` qua OpenAI-compatible endpoint của Google (`CAPTION_LLM_*`, mục 5.3). Rerank là service ngoài `POST {RERANK_BASE_URL}/rerank` (mặc định legacy BGE `BAAI/bge-reranker-v2-m3` :8010, documents text-only, client chia batch ≤ 100/request; `RERANK_MULTIMODAL=false`; lỗi rerank thì trả chunk không điểm (fallback)).
+- LLM (describe): profile `qwen-selfhost` (vLLM, OpenAI-compatible) qua `QWEN_LLM_*` cho bảng/công thức/generic; **caption ảnh dùng Gemini** `gemini-3.5-flash-lite` qua OpenAI-compatible endpoint của Google (`CAPTION_LLM_*`, mục 5.3). Rerank là service ngoài `POST {RERANK_BASE_URL}/rerank` (mặc định legacy BGE `BAAI/bge-reranker-v2-m3` :8010, documents text-only, client chia batch ≤ 100/request; `RERANK_MULTIMODAL=false`; lỗi rerank thì trả chunk không điểm (fallback)).
 - Embedding: mặc định backend `vintern` — **`5CD-AI/Vintern-Embedding-1B`** serve qua `vintern-embedding-server` (máy B, repo riêng, port **8007**, auth `Bearer <EMBED_SERVER_TOKEN>`; `GET /info` + `POST /embed` trả multi-vector per-token dim 128, tối đa 8 item/request). Client `VinternEmbedder` (`ami_rag/core/vintern_embedder.py`). Backend BGE-M3 (embedding-server :8008) **đã bị xoá**; `qwen-embedding-server` và gateway `nemotron-vl-vllm` chỉ còn là backend legacy qua `EMBED_BACKEND` (`auto`: model chứa `vintern` → vintern, prefix `Qwen/` → custom, còn lại → openai). Ở truy vấn: `embed_query` trả multi-vector, Qdrant so khớp MaxSim trên named vector `dense` (mục 5.6). Vintern nhận ảnh bytes: chunk ảnh được gắn `image_b64` (**image-only** — server 422 nếu kèm text; lỗi fetch → fallback caption tiếng Việt do stage describe sinh, mục 5.3). Máy A chỉ gọi HTTP — không cài torch/transformers, không cần GPU cho embed.
 
 ## 2. Quyết định nguồn nội dung
@@ -152,7 +152,7 @@ File mẫu: `.env.ami.example` (copy thành `.env`). Nguồn sự thật: `ami_r
 | | `QWEN_VLM_MODEL` | rỗng | VLM cho caption ảnh ở chế độ `vision`. Rỗng = auto sẽ dùng Gemini (có key) hoặc text thô (mục 5.3) |
 | Caption ảnh (Gemini) | `IMAGE_DESCRIBE_MODE` | `auto` | `auto`/`gemini`/`vision`/`none`. `auto`: có `CAPTION_LLM_API_KEY` → `gemini`; không key nhưng có `QWEN_VLM_MODEL` → `vision`; còn lại → `none` (text thô caption + footnotes + ngữ cảnh, không gọi LLM). Legacy `"text"` → warning + `none` |
 | | `CAPTION_LLM_API_KEY` | rỗng | API key Gemini, **chỉ từ env** — không ghi vào file trong git. Có key là bật caption Gemini |
-| | `CAPTION_LLM_BASE_URL` / `CAPTION_LLM_MODEL` | `https://generativelanguage.googleapis.com/v1beta/openai/` / `gemini-2.5-flash-lite` | OpenAI-compatible endpoint của Google AI Studio |
+| | `CAPTION_LLM_BASE_URL` / `CAPTION_LLM_MODEL` | `https://generativelanguage.googleapis.com/v1beta/openai/` / `gemini-3.5-flash-lite` | OpenAI-compatible endpoint của Google AI Studio |
 | | `CAPTION_LLM_TIMEOUT` | `120` | giây/request caption (mỗi ảnh 1 request) |
 | | `CAPTION_LLM_MAX_CONCURRENCY` | `4` | số request caption song song (vừa fetch ảnh MinIO vừa gọi Gemini) |
 | | `CAPTION_LLM_RETRIES` | `2` | retry do client OpenAI tự xử lý |
@@ -318,18 +318,20 @@ Khuyến nghị:
 - Hết credit/quota hay model quá tải trên server (5xx sau retry) → doc ở stage `embed` thành `failed` với lý do rõ ràng; chạy lại `retry` sau khi server ổn định.
 - Redis: `redis-py` ≥ 8 mặc định `socket_timeout=5s`, trùng với `XREADGROUP BLOCK` (`WORKER_POLL_BLOCK_MS`) nên worker báo `queue read failed: Timeout reading from redis`. Client của worker đặt `socket_timeout = WORKER_POLL_BLOCK_MS/1000 + 5` và `health_check_interval=30` (`ingest_worker.py::_build_default_deps`).
 
-### 5.3 Caption ảnh (Gemini 2.5 Flash Lite) + materialize ảnh từ MinIO
+### 5.3 Caption ảnh (Gemini 3.5 Flash Lite) + materialize ảnh từ MinIO
 
-Ảnh sau parse **chỉ còn ở MinIO** theo `asset_key` (file local của parse stage nằm trong temp dir đã bị xoá ngay sau parse). Trong khi đó `ImageModalProcessor` đọc ảnh từ `img_path` qua `Path.exists()` — trước đây `img_path` trỏ đúng temp dir đã xoá đó, nên **nhánh `vision` chưa từng chạy được** (kể cả `reindex --from-stage describe`); path OCR-ảnh text-only (OCR service ~30s/ảnh) cũng vậy. Giải pháp hiện tại: chuyển hoàn toàn sang **caption bằng Gemini `gemini-2.5-flash-lite`** (OpenAI-compatible endpoint của Google, `CAPTION_LLM_*`) kèm bước materialize ảnh:
+Ảnh sau parse **chỉ còn ở MinIO** theo `asset_key` (file local của parse stage nằm trong temp dir đã bị xoá ngay sau parse). Trong khi đó `ImageModalProcessor` đọc ảnh từ `img_path` qua `Path.exists()` — trước đây `img_path` trỏ đúng temp dir đã xoá đó, nên **nhánh `vision` chưa từng chạy được** (kể cả `reindex --from-stage describe`); path OCR-ảnh text-only (OCR service ~30s/ảnh) cũng vậy. Giải pháp hiện tại: chuyển hoàn toàn sang **caption bằng Gemini `gemini-3.5-flash-lite`** (OpenAI-compatible endpoint của Google, `CAPTION_LLM_*`) kèm bước materialize ảnh:
 
 1. **Materialize** (`vector_pipeline._materialize_images`): với mọi image-item có `asset_key`, fetch bytes từ MinIO **song song** theo semaphore `CAPTION_LLM_MAX_CONCURRENCY` → ghi vào `tempfile.TemporaryDirectory()` (tên `sha1(asset_key)[:12]` + ext suy từ magic bytes) → tạo `describe_items` là shallow copy gán `img_path` = file tạm (item thiếu `asset_key` giữ `img_path` gốc). **`content_list` gốc không bị mutate** (chunk + `save_content_list` dùng bản gốc); temp dir được xoá trong `finally` sau khi describe xong.
 2. **Caption** (`factory._build_caption_func`): `AsyncOpenAI(base_url=CAPTION_LLM_BASE_URL, api_key=…)` — closure nhận `(prompt, system_prompt, image_data=<base64>, …)`, tái dùng `_openai_style_messages` dựng data URI (sniff mime png/webp/gif/jpeg). `ImageModalProcessor` vẫn là processor chạy mô tả (đọc file tạm, build prompt vision có caption/footnote/ngữ cảnh, parse JSON `detailed_description` + `entity_info`).
+
+**Ngữ cảnh (context) trong prompt caption**: `ContextExtractor` mode `page`, window ±1 trang — gom text item của trang chứa ảnh cộng 1 trang trước + 1 trang sau (text item PDF `backend_data` chính là text OCR; doc crawl là text bài viết), kèm **chú thích gốc** (`captions=`) và footnotes truyền thẳng vào prompt. `ContextConfig.max_context_tokens` đã nâng `2000 → 1_000_000`: Gemini 3.5 Flash Lite có context 1M token nên text ±1 trang không cần cắt (giới hạn cũ so ký tự với 2000, thường cụt mất phần trang sau). Đổi window/giới hạn → chạy lại `ami-rag recaption` (mục 7).
 
 Ảnh crawl không còn là item `image` nữa (mục 2 — chỉ còn URL gốc trong `artifact_urls` của chunk text), nên describe chỉ xử lý ảnh/table của pdf/docx.
 
 Chế độ (`IMAGE_DESCRIBE_MODE`, xem bảng mục 4): `gemini` (có key) → caption Gemini; `vision` → gửi ảnh cho Qwen VLM (`QWEN_VLM_MODEL`); `none` → **text thô** `_describe_image_raw` = caption + footnotes + ngữ cảnh, không gọi LLM. `auto`: có `CAPTION_LLM_API_KEY` → `gemini`, elif có `QWEN_VLM_MODEL` → `vision`, else → `none`. Legacy `"text"` tự chuyển `"none"` kèm warning (path OCR-ảnh đã xoá).
 
-**Ngôn ngữ mô tả (`CAPTION_LLM_LANGUAGE`, mặc định `vi`; để rỗng = prompt gốc, mô tả tiếng Anh).** Corpus và truy vấn là tiếng Việt nhưng prompt gốc ("comprehensive and detailed") sinh mô tả tiếng Anh dài dòng, làm vector ảnh lệch xa truy vấn. Đo thực tế trên index (cosine giữa vector truy vấn "sân bóng đá cơ sở Hà Đông" và vector chunk ảnh sơ đồ mặt bằng): **caption EN = 0.337, caption VI đầy đủ = 0.484**. Cơ chế: `ImageModalProcessor` nối thêm `vision_prompt_language_note` khi `item_info` có `caption_language`/`doc_title` (do `_stage_describe` truyền vào, lấy từ `CAPTION_LLM_LANGUAGE` và tiêu đề doc) — yêu cầu viết mô tả bằng ngôn ngữ đó, **ghi nguyên văn mọi chữ trong ảnh** (không dịch, không diễn giải) và liệt kê đầy đủ không bỏ sót; với sơ đồ/tổ chức/schematic phải nêu rõ từng phần tử nằm ở đâu so với nhau và mọi mũi tên theo hướng nào; đồng thời cấm bình luận kiểu "matching the context mentioned in the text" vốn làm nhèu nội dung. Đổi biến này cần `ami-rag reindex --all --from-stage describe` (chỉ gọi lại Gemini cho ảnh; chunk text giữ nguyên nên embed trúng cache).
+**Ngôn ngữ mô tả (`CAPTION_LLM_LANGUAGE`, mặc định `vi`; để rỗng = prompt gốc, mô tả tiếng Anh).** Corpus và truy vấn là tiếng Việt nhưng prompt gốc ("comprehensive and detailed") sinh mô tả tiếng Anh dài dòng, làm vector ảnh lệch xa truy vấn. Đo thực tế trên index (cosine giữa vector truy vấn "sân bóng đá cơ sở Hà Đông" và vector chunk ảnh sơ đồ mặt bằng): **caption EN = 0.337, caption VI đầy đủ = 0.484**. Cơ chế: `ImageModalProcessor` nối thêm `vision_prompt_language_note` khi `item_info` có `caption_language`/`doc_title` (do `_stage_describe` truyền vào, lấy từ `CAPTION_LLM_LANGUAGE` và tiêu đề doc) — yêu cầu viết mô tả bằng ngôn ngữ đó, **ghi nguyên văn mọi chữ trong ảnh** (không dịch, không diễn giải) và liệt kê đầy đủ không bỏ sót; với sơ đồ/tổ chức/schematic phải nêu rõ từng phần tử nằm ở đâu so với nhau và mọi mũi tên theo hướng nào; đồng thời cấm bình luận kiểu "matching the context mentioned in the text" vốn làm nhèu nội dung. Đổi biến này cần `ami-rag recaption --all` (tương đương `reindex --all --from-stage describe`; chỉ gọi lại Gemini cho ảnh; chunk text giữ nguyên nên embed trúng cache).
 
 **Kiểm chứng caption trước khi reindex cả doc**: `scripts/recaption_image.py` đi đúng đường caption của pipeline (cùng processor, prompt, ngữ cảnh, ngôn ngữ) nhưng **dừng trước khi ghi `descriptions.json`/chunk/embed** — thử vài ảnh với chi phí đúng bằng số ảnh đó:
 
@@ -563,9 +565,21 @@ In workspace, config đang dùng (`embed_model`/`embed_dim`/`chunker_version`), 
   - **Ngắt quãng / resume / lặp vô hạn**: doc xong embed được đánh dấu `indexed` kèm `embed_model` mới trong registry → effective không còn `stale`; doc chưa xong giữ `embed_model` cũ ⇒ vẫn `stale` và được lệnh `--stale` (mặc định) chọn lại. Đường dẫn resume = chạy lại cùng lệnh đến khi `ami-rag status` không còn doc `stale`; ngắt giữa chừng an toàn (stage embed luôn `delete_by_doc` trước khi upsert). Doc lỗi nằm ở `failed` kèm `error_stage`, xử lý `retry --from-stage embed`.
   - `--limit`/`--sleep`/`--batch`/`--batch-sleep` để chia lượt chậm, đè nhẹ embed/rerank server khi chạy cả nghìn doc; `--dry-run` vẫn tính đúng scope sau `--limit`.
   - Index mới OK (so sánh retrieve + live test `tests/test_retrieval_recall_live.py`) mới dọn: `ami-rag cleanup --stale-models --purge-cache-model "BAAI/bge-m3" --yes`.
-- Các tình huống khác (lịch sử, cùng cơ chế): sinh lại caption ảnh `--from-stage describe` (1 call Gemini/ảnh, mục 5.3); doc crawl cũ (index khi còn tải ảnh) chuyển sang `artifact_urls` `--from-stage parse` (mục 2); nâng `CHUNKER_VERSION` `--from-stage chunk` (mục 5.5); **đổi marker chunk cũ sang tiếng Việt** `scripts/migrate_chunk_markers.py --yes` + `--from-stage embed` (mục 5.5, không gọi API describe).
+- Các tình huống khác (lịch sử, cùng cơ chế): sinh lại caption ảnh `--from-stage describe` (1 call Gemini/ảnh, mục 5.3) — hoặc dùng lệnh tắt `recaption` bên dưới; doc crawl cũ (index khi còn tải ảnh) chuyển sang `artifact_urls` `--from-stage parse` (mục 2); nâng `CHUNKER_VERSION` `--from-stage chunk` (mục 5.5); **đổi marker chunk cũ sang tiếng Việt** `scripts/migrate_chunk_markers.py --yes` + `--from-stage embed` (mục 5.5, không gọi API describe).
 
 Mã thoát: `0` xong, `1` một số doc thất bại, `2` dừng sớm (preflight embed server, lockfile, validation).
+
+### `recaption` — chạy lại caption ảnh (describe) cho doc có ảnh
+
+Lệnh tắt của `ami-rag reindex --from-stage describe`: ép làm lại stage describe (gọi lại Gemini cho từng ảnh, 1 call/ảnh — mục 5.3) rồi chunk → embed. Dùng khi prompt/ngữ cảnh/model caption (`CAPTION_LLM_*`) hoặc `CAPTION_LLM_LANGUAGE` đổi. Cờ giống `reindex` (trừ `--scan`/`--from-stage` vốn không còn ý nghĩa): `--all` / `--doc <id> ...` / `--stale` (mặc định), `--dry-run`, `--yes`, `--limit`, `--sleep`, `--batch`, `--batch-sleep`, `--embed-server-url`, `--embed-batch-size`.
+
+```bash
+ami-rag recaption --dry-run                 # phạm vi + số chunk trúng cache (không gọi Gemini)
+ami-rag recaption --all --batch 20 --yes    # chạy thật, ngắt quãng; chạy lại đến khi hết stale
+make cli recaption --yes                    # trong Docker (mục 7.1)
+```
+
+Lưu ý: describe **ghi đè** `descriptions.json` không có điều kiện — caption lỗi/hết quota thì rơi về text thô (mục 5.3); xem log trước khi dọn dữ liệu cũ. Test prompt trước khi chạy cả collection: `scripts/recaption_image.py` (mục 5.3).
 
 ### `cleanup` — kiểm tra + xoá collection legacy của pipeline LightRAG cũ
 
@@ -620,6 +634,8 @@ make cli status --failed
 make cli -- reindex --stale --dry-run      # cờ dạng --xxx cần "--" để make không tự parse
 make cli -- reindex --all --yes
 make cli -- retry --all-failed --yes
+make cli -- recaption --all --yes          # chạy lại caption ảnh (describe -> chunk -> embed)
+make cli -- recaption --dry-run            # cờ --xxx luôn cần "--"
 make cli CLI_SERVICE=ami-rag-api status    # đổi container
 ```
 
@@ -644,7 +660,7 @@ Chọn container:
 | Lệnh | Nên chạy trong | Lý do |
 |---|---|---|
 | `status` | `ami-rag-worker` hoặc `ami-rag-api` | chỉ đọc Mongo; `--check-embed-server` cần `.env` trỏ đúng embed server |
-| `retry`, `reindex` | `ami-rag-worker` | chạy trực tiếp trong tiến trình CLI; cần tới embed server + Mongo của worker |
+| `retry`, `reindex`, `recaption` | `ami-rag-worker` | chạy trực tiếp trong tiến trình CLI; cần tới embed server + Mongo của worker |
 
 Lưu ý:
 - Lệnh `exec` dài nên chạy nền, có log: `docker compose -f docker-compose.ami.yml exec -T ami-rag-worker ami-rag reindex --all --yes > reindex.log 2>&1 &`, rồi `tail -f reindex.log`. Hoặc dùng `tmux`/`screen`. Ngắt phiên SSH có thể làm dừng lệnh đang chạy ở foreground; chạy lại là an toàn (idempotent).

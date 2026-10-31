@@ -83,7 +83,7 @@ GPU cho MinerU là tuỳ chọn: chạy được trên CPU (~5x chậm hơn). Co
 | `MONGO_URI` | `mongodb://localhost:27017/?directConnection=true` | (+ `RAG_DB`, `ORG_DB`, `DOC_COLLECTION`) |
 | `REDIS_URL` / `RAG_STREAM` | `redis://localhost:6379/0` / `rag:ingest` | Queue ingest |
 | `IMAGE_DESCRIBE_MODE` | `auto` | `auto\|gemini\|vision\|none` — cách mô tả ảnh |
-| `CAPTION_LLM_API_KEY` | — | Bật caption Gemini (`CAPTION_LLM_MODEL=gemini-2.5-flash-lite`, `CAPTION_LLM_LANGUAGE=vi`) |
+| `CAPTION_LLM_API_KEY` | — | Bật caption Gemini (`CAPTION_LLM_MODEL=gemini-3.5-flash-lite`, `CAPTION_LLM_LANGUAGE=vi`) |
 | `PARSE_TEXT_SOURCE` | `backend_data` | Nguồn text/bảng khi parse PDF/DOCX |
 | `CHUNKER_VERSION` | `v1` | Một phần tên collection Qdrant |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (trống) | Tracing OTLP/HTTP tuỳ chọn (trống = tắt) |
@@ -122,14 +122,17 @@ ami-rag status [--failed] [--stale] [--doc ID] [--check-embed-server]
 ami-rag retry (--doc ID ... | --all-failed) [--from-stage STAGE] [--max-attempts N] [--yes]
 ami-rag reindex [--scan | --all | --doc ID ... | --stale] [--from-stage STAGE]
                 [--dry-run] [--yes] [--limit N] [--sleep S] [--batch B] [--batch-sleep S]
+ami-rag recaption [--all | --doc ID ...] [--dry-run] [--yes] [--limit N] [--sleep S]
+                  [--batch B] [--batch-sleep S]
 ami-rag cleanup [--stale-models] [--purge-cache-model MODEL ...] [--dry-run] [--yes]
 ```
 
 - `status` mặc định chỉ đọc local (0 LLM, 0 embed); `--check-embed-server` gọi `/health` + handshake server embed.
 - `reindex` chạy ngắt quãng để tránh quá tải embed server: `--sleep` giữa 2 doc (mặc định 0.2s), `--batch 20` doc mỗi lô, `--batch-sleep 2.0`s giữa các lô, `--limit N` cắt số doc. `--from-stage` nhận `parse|describe|chunk|embed`; `--dry-run` in số doc/chunk cần embed và số trúng cache, không ghi gì.
+- `recaption` = `reindex --from-stage describe`: chạy lại caption ảnh bằng Gemini rồi chunk → embed — dùng khi model/prompt/ngữ cảnh caption đổi.
 - `cleanup --stale-models` xoá collection Qdrant của embed model/version cũ; `--purge-cache-model` xoá cache embedding SQLite theo model.
 
-Khi chạy Docker dùng `make cli`: `make cli status`, `make cli -- reindex --stale --dry-run` (các flag `--xxx` cần dấu `--` để make không tự parse), `make cli BG=1 -- ...` để chạy nền.
+Khi chạy Docker dùng `make cli`: `make cli status`, `make cli -- reindex --stale --dry-run`, `make cli -- recaption --yes` (các flag `--xxx` cần dấu `--` để make không tự parse), `make cli BG=1 -- ...` để chạy nền.
 
 ## Collection Qdrant
 
