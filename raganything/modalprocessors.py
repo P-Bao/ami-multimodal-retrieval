@@ -943,6 +943,10 @@ class TableModalProcessor(BaseModalProcessor):
             table_img_path = content_data.get("img_path")
             table_caption = normalize_caption_list(content_data.get("table_caption"))
             table_body = format_table_body(get_table_body(content_data))
+            # Prompt bảng quá dài (hàng nghìn dòng OCR) làm vLLM sinh chậm ->
+            # dồn hàng đợi + timeout dây chuyền. Cắt ở prompt; chunk ghi vào
+            # Qdrant vẫn mang table_body đầy đủ (không mất số liệu trong index).
+            table_body = table_body[:4000]
             table_footnote = normalize_caption_list(content_data.get("table_footnote"))
 
             # Extract context for current item
@@ -979,6 +983,9 @@ class TableModalProcessor(BaseModalProcessor):
             response = await self.modal_caption_func(
                 table_prompt,
                 system_prompt=PROMPTS["TABLE_ANALYSIS_SYSTEM"],
+                # Chặn output dài: mô tả bảng gọn giúp tổng thời gian sinh nằm
+                # dưới timeout GPU proxy kể cả khi nhiều bảng chờ trong hàng đợi.
+                max_tokens=1024,
             )
 
             # Parse response (reuse existing logic)

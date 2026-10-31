@@ -56,6 +56,50 @@ class TestContextConfig:
         assert config.max_context_tokens == 100_000
 
 
+class TestTableModalProcessor:
+    @pytest.mark.asyncio
+    async def test_prompt_truncates_body_and_caps_max_tokens(self):
+        """Prompt bảng cắt table_body về 4000 ký tự + gọi LLM với max_tokens=1024."""
+        import asyncio
+
+        from raganything.modalprocessors import TableModalProcessor
+
+        captured: dict = {}
+
+        async def fake_llm(prompt, system_prompt=None, **kwargs):
+            await asyncio.sleep(0)
+            captured["prompt"] = prompt
+            captured["kwargs"] = kwargs
+            return (
+                '{"detailed_description": "mô tả bảng", '
+                '"entity_info": {"entity_name": "Bảng 1", "entity_type": "table", '
+                '"summary": "tóm tắt"}}'
+            )
+
+        proc = TableModalProcessor(
+            lightrag=None,
+            modal_caption_func=fake_llm,
+            global_config={"chunk_token_size": 1200},
+        )
+        item = {
+            "type": "table",
+            "table_caption": ["Bảng 1: Cơ cấu"],
+            "table_body": "<table>" + "x" * 9000 + "</table>",
+            "page_idx": 0,
+        }
+
+        desc, _ = await proc.generate_description_only(
+            item,
+            "table",
+            item_info={"page_idx": 0, "index": 1, "type": "table"},
+        )
+
+        assert desc == "mô tả bảng"
+        # body 9000+ ký tự bị cắt trong prompt (trần 4000 + khung prompt)
+        assert len(captured["prompt"]) < 6000
+        assert captured["kwargs"].get("max_tokens") == 1024
+
+
 class TestRAGAnythingConfig:
     def test_default_values(self, monkeypatch):
         # Clear environment overrides to make defaults deterministic
