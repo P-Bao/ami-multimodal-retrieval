@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     QWEN_LLM_MODEL: str = "Qwen/Qwen3-32B"
     QWEN_LLM_API_KEY: str = ""
     QWEN_VLM_MODEL: str = ""
+    # Timeout/retry client LLM describe (bảng/công thức/generic). GPU proxy cắt
+    # kết nối ~120s khi hàng đợi dài -> client ngắn bằng để fail-fast, không treo.
+    QWEN_LLM_TIMEOUT: int = 120
+    QWEN_LLM_RETRIES: int = 1
+    # Số request LLM song song ở describe: mỗi bảng lớn chiếm GPU 15-60s, ập cả
+    # chục bảng cùng lúc gây dồn hàng đợi -> timeout dây chuyền (đã gặp thực tế).
+    QWEN_LLM_MAX_CONCURRENCY: int = 2
+    # Mô tả bảng: "raw" = dùng table_body (OCR HTML/markdown) thẳng vào chunk,
+    # không gọi LLM (nhanh, không mất số liệu); "llm" = tóm tắt bằng Qwen.
+    TABLE_DESCRIBE_MODE: str = "raw"
 
     # --- Describe stage: caption ảnh (Gemini 2.5 Flash Lite, OpenAI-compatible) ---
     # auto | gemini | vision | none.

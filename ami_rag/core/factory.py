@@ -16,6 +16,9 @@ def _build_llm_func(settings: Settings) -> Callable:
     client = AsyncOpenAI(
         base_url=settings.QWEN_LLM_BASE_URL,
         api_key=settings.QWEN_LLM_API_KEY or "EMPTY",
+        # GPU proxy cắt kết nối ~120s khi nghẽn -> client ngắn bằng để fail-fast
+        timeout=float(getattr(settings, "QWEN_LLM_TIMEOUT", 120) or 120),
+        max_retries=int(getattr(settings, "QWEN_LLM_RETRIES", 1) or 0),
     )
 
     async def qwen_llm(prompt, system_prompt=None, history_messages=None, **kwargs):

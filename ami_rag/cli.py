@@ -858,7 +858,7 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    for noisy in ("httpx", "httpcore", "pymongo"):
+    for noisy in ("httpx", "httpcore", "pymongo", "openai"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     if args.command == "retry" and not (args.doc or args.all_failed):
