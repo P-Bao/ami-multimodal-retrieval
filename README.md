@@ -84,6 +84,8 @@ GPU cho MinerU là tuỳ chọn: chạy được trên CPU (~5x chậm hơn). Co
 | `REDIS_URL` / `RAG_STREAM` | `redis://localhost:6379/0` / `rag:ingest` | Queue ingest |
 | `IMAGE_DESCRIBE_MODE` | `auto` | `auto\|gemini\|vision\|none` — cách mô tả ảnh |
 | `CAPTION_LLM_API_KEY` | — | Bật caption Gemini (`CAPTION_LLM_MODEL=gemini-3.5-flash-lite`, `CAPTION_LLM_LANGUAGE=vi`) |
+| `TABLE_DESCRIBE_MODE` | `raw` | `raw\|llm` — bảng dùng thẳng `table_body` OCR (không LLM) hoặc Qwen tóm tắt |
+| `QWEN_LLM_TIMEOUT` / `QWEN_LLM_RETRIES` / `QWEN_LLM_MAX_CONCURRENCY` | `120` / `1` / `2` | Client LLM describe fail-fast + giới hạn request song song |
 | `PARSE_TEXT_SOURCE` | `backend_data` | Nguồn text/bảng khi parse PDF/DOCX |
 | `CHUNKER_VERSION` | `v1` | Một phần tên collection Qdrant |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (trống) | Tracing OTLP/HTTP tuỳ chọn (trống = tắt) |
