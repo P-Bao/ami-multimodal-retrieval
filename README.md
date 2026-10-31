@@ -136,7 +136,7 @@ Khi chạy Docker dùng `make cli`: `make cli status`, `make cli -- reindex --st
 
 ## Collection Qdrant
 
-Tên collection: `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` — hiện tại `multimodal__bge-m3__v1`.
+Tên collection: `{WORKSPACE}__{embed_model_slug}__{CHUNKER_VERSION}` — hiện tại `multimodal__vintern-embedding-1b__v1`.
 
 Đổi `EMBED_MODEL` hoặc `CHUNKER_VERSION` → service tự dùng collection mới; chạy `ami-rag reindex --scan` để index lại, rồi `ami-rag cleanup --stale-models` để dọn collection cũ.
 

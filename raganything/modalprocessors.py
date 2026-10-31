@@ -44,9 +44,10 @@ class ContextConfig:
 
     context_window: int = 1  # Window size for context extraction
     context_mode: str = "page"  # "page", "chunk", "token"
-    # Caption model (Gemini 3.5 Flash Lite) có context 1M token -> ±1 trang text
-    # không cần cắt; giới hạn cũ 2000 thường cụt mất phần trang sau.
-    max_context_tokens: int = 1_000_000
+    # Caption model (Gemini 3.5 Flash Lite) có context 1M token -> text ±1 trang
+    # (vài KB) không cần cắt như giới hạn cũ 2000. Trần 100k ký tự chỉ để chặn
+    # content_list crawl legacy (page_idx=0 mọi item): "±1 trang" thành cả bài.
+    max_context_tokens: int = 100_000
     include_headers: bool = True  # Whether to include headers/titles
     include_captions: bool = True  # Whether to include image/table captions
     filter_content_types: List[str] = None  # Content types to include

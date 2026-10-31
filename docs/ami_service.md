@@ -325,7 +325,7 @@ Khuyến nghị:
 1. **Materialize** (`vector_pipeline._materialize_images`): với mọi image-item có `asset_key`, fetch bytes từ MinIO **song song** theo semaphore `CAPTION_LLM_MAX_CONCURRENCY` → ghi vào `tempfile.TemporaryDirectory()` (tên `sha1(asset_key)[:12]` + ext suy từ magic bytes) → tạo `describe_items` là shallow copy gán `img_path` = file tạm (item thiếu `asset_key` giữ `img_path` gốc). **`content_list` gốc không bị mutate** (chunk + `save_content_list` dùng bản gốc); temp dir được xoá trong `finally` sau khi describe xong.
 2. **Caption** (`factory._build_caption_func`): `AsyncOpenAI(base_url=CAPTION_LLM_BASE_URL, api_key=…)` — closure nhận `(prompt, system_prompt, image_data=<base64>, …)`, tái dùng `_openai_style_messages` dựng data URI (sniff mime png/webp/gif/jpeg). `ImageModalProcessor` vẫn là processor chạy mô tả (đọc file tạm, build prompt vision có caption/footnote/ngữ cảnh, parse JSON `detailed_description` + `entity_info`).
 
-**Ngữ cảnh (context) trong prompt caption**: `ContextExtractor` mode `page`, window ±1 trang — gom text item của trang chứa ảnh cộng 1 trang trước + 1 trang sau (text item PDF `backend_data` chính là text OCR; doc crawl là text bài viết), kèm **chú thích gốc** (`captions=`) và footnotes truyền thẳng vào prompt. `ContextConfig.max_context_tokens` đã nâng `2000 → 1_000_000`: Gemini 3.5 Flash Lite có context 1M token nên text ±1 trang không cần cắt (giới hạn cũ so ký tự với 2000, thường cụt mất phần trang sau). Đổi window/giới hạn → chạy lại `ami-rag recaption` (mục 7).
+**Ngữ cảnh (context) trong prompt caption**: `ContextExtractor` mode `page`, window ±1 trang — gom text item của trang chứa ảnh cộng 1 trang trước + 1 trang sau (text item PDF `backend_data` chính là text OCR; doc crawl là text bài viết), kèm **chú thích gốc** (`captions=`) và footnotes truyền thẳng vào prompt. `ContextConfig.max_context_tokens` đã nâng `2000 → 100_000` ký tự: text ±1 trang (vài KB) không còn bị cắt như trước (giới hạn cũ so ký tự với 2000, thường cụt mất phần trang sau); trần 100k chỉ để chặn content_list crawl legacy (`page_idx=0` mọi item — "±1 trang" thành cả bài viết). Đổi window/giới hạn → chạy lại `ami-rag recaption` (mục 7).
 
 Ảnh crawl không còn là item `image` nữa (mục 2 — chỉ còn URL gốc trong `artifact_urls` của chunk text), nên describe chỉ xử lý ảnh/table của pdf/docx.
 
@@ -576,7 +576,7 @@ Lệnh tắt của `ami-rag reindex --from-stage describe`: ép làm lại stage
 ```bash
 ami-rag recaption --dry-run                 # phạm vi + số chunk trúng cache (không gọi Gemini)
 ami-rag recaption --all --batch 20 --yes    # chạy thật, ngắt quãng; chạy lại đến khi hết stale
-make cli recaption --yes                    # trong Docker (mục 7.1)
+make cli -- recaption --yes                # trong Docker (mục 7.1)
 ```
 
 Lưu ý: describe **ghi đè** `descriptions.json` không có điều kiện — caption lỗi/hết quota thì rơi về text thô (mục 5.3); xem log trước khi dọn dữ liệu cũ. Test prompt trước khi chạy cả collection: `scripts/recaption_image.py` (mục 5.3).

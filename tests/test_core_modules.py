@@ -44,6 +44,18 @@ class TestDocStatus:
 # ── RAGAnythingConfig Tests ──────────────────────────────────────
 
 
+class TestContextConfig:
+    def test_default_values(self):
+        from raganything.modalprocessors import ContextConfig
+
+        config = ContextConfig()
+        assert config.context_window == 1
+        assert config.context_mode == "page"
+        # Trần 100k ký tự: text ±1 trang không bị cắt, vẫn chặn content_list
+        # crawl legacy (page_idx=0 mọi item) nơi "±1 trang" là cả bài.
+        assert config.max_context_tokens == 100_000
+
+
 class TestRAGAnythingConfig:
     def test_default_values(self, monkeypatch):
         # Clear environment overrides to make defaults deterministic
